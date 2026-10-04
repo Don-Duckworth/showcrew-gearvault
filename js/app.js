@@ -1,18 +1,50 @@
 // ShowCrew GearVault — UI controller.
 import * as Store from './store.js';
-import * as Files from './files.js';
+import * as Files from './files.js'; // v1 on-device blobs (upload offer) + thumbnail / base64 helpers
 import * as C from './carnet.js';
+import * as M from './cloudmap.js';
+import * as Cache from './cache.js';
+import * as Auth from './auth.js';
+import { createCloud } from './cloud.js';
+import * as CFG from './config.js';
 
-const APP_VERSION = '1.0.0';
+const APP_VERSION = '2.0.0';
 const $ = (sel, el = document) => el.querySelector(sel);
 const $$ = (sel, el = document) => [...el.querySelectorAll(sel)];
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
-let S = Store.load() || Store.emptyState();
+let S = Store.emptyState();
 const ui = { view: 'gear', q: '', fCat: '', fStatus: '', fTag: '', sort: 'name', tripId: null, edit: null };
 
+// ---------- cloud session / sync state ----------
+let sb = null, cloud = null, user = null, bootOffline = false, syncErr = null, syncing = false, syncT = 0, retryT = 0;
+const LAST_UID = 'showcrew.gearvault.lastAal2Uid';
+const isOffline = () => bootOffline || !navigator.onLine;
+const readOnly = () => isOffline() || !cloud;
+async function saveCache() { if (user) await Cache.kvSet('state', { uid: user.id, email: user.email, S, savedAt: Date.now() }).catch(() => {}); }
 function persist() {
-  if (!Store.save(S)) toast('⚠ Could not save — device storage is full. Export a backup.');
+  if (readOnly()) { toast('Offline — changes can\'t be saved. Reconnect to edit.'); return; }
+  clearTimeout(syncT); syncT = setTimeout(runSync, 250); renderBadge('saving');
+}
+async function runSync() {
+  if (!cloud || isOffline()) return renderBadge();
+  syncing = true; renderBadge();
+  try { await cloud.sync(() => S); syncErr = null; clearTimeout(retryT); await saveCache(); }
+  catch (e) {
+    syncErr = e; console.warn('GearVault sync failed', e);
+    toast('⚠ Not saved to the cloud yet — will retry. ' + (e.message || ''), 3200);
+    clearTimeout(retryT); retryT = setTimeout(runSync, 8000);
+  } finally { syncing = false; renderBadge(); }
+}
+const unsaved = () => !!(cloud && cloud.pending(S));
+function renderBadge(state) {
+  const b = $('#netBadge'); if (!b) return;
+  let cls = 'ok', txt = 'CLOUD · SYNCED';
+  if (isOffline()) { cls = 'off'; txt = 'OFFLINE · READ-ONLY'; }
+  else if (state === 'saving' || syncing) { cls = 'busy'; txt = 'SAVING…'; }
+  else if (syncErr || unsaved()) { cls = 'err'; txt = 'NOT SAVED · RETRYING'; }
+  b.className = 'netbadge ' + cls; b.textContent = txt; b.title = isOffline() ? 'No connection — showing the last synced copy. Editing is disabled.' : syncErr ? String(syncErr.message || syncErr) : 'All changes are saved to Supabase';
+  document.body.classList.toggle('readonly', readOnly());
 }
 
 // ---------- formatting ----------
@@ -61,11 +93,16 @@ function toast(msg, ms = 1900) { const t = $('#toast'); t.textContent = msg; t.c
 
 // ---------- files / thumbnails ----------
 const urlCache = new Map();
+const findAtt = id => (ui.edit?.d.atts || []).find(a => a.id === id) || S.items.flatMap(i => i.atts).find(a => a.id === id);
+/** Thumbnail: offline cache first, else download from the private bucket (authenticated) and cache it. */
 async function thumbURL(attId) {
   if (urlCache.has(attId)) return urlCache.get(attId);
-  const rec = await Files.get(attId).catch(() => null); if (!rec) return null;
-  const src = rec.thumb || (/^image\//.test(rec.blob.type) ? rec.blob : null); if (!src) return null;
-  const u = URL.createObjectURL(src); urlCache.set(attId, u); return u;
+  let blob = await Cache.blobGet(attId + ':t');
+  if (!blob) {
+    const a = findAtt(attId); if (!a || !M.isImage(a.type) || !cloud || isOffline()) return null;
+    try { blob = await cloud.download(a.thumb || a.path); await Cache.blobPut(attId + ':t', blob); } catch { return null; }
+  }
+  const u = URL.createObjectURL(blob); urlCache.set(attId, u); return u;
 }
 function hydrateThumbs(root = document) {
   $$('img[data-thumb]:not([src])', root).forEach(async img => { const u = await thumbURL(img.dataset.thumb); if (u) img.src = u; else img.replaceWith(Object.assign(document.createElement('span'), { textContent: 'FILE' })); });
@@ -76,26 +113,39 @@ function download(name, blob) {
   setTimeout(() => URL.revokeObjectURL(a.href), 8000);
 }
 const fileSafe = s => String(s || '').replace(/[^\w\-]+/g, '_').replace(/^_+|_+$/g, '') || 'export';
-async function addFiles(fileList, kind, target) {
+async function addFiles(fileList, kind, target, itemId) {
   const added = [];
+  if (readOnly()) { toast('Offline — connect to add photos or receipts'); return added; }
   for (const f of fileList) {
     if (!/^image\/|^application\/pdf$/.test(f.type) && !/\.(pdf|jpe?g|png|heic|heif|webp|gif)$/i.test(f.name)) { toast(`Skipped ${f.name} (images or PDF only)`); continue; }
     const id = Store.uid('att'), blob = f.type ? f : new Blob([f], { type: /\.pdf$/i.test(f.name) ? 'application/pdf' : 'image/jpeg' });
-    try { await Files.put(id, blob, await Files.makeThumb(blob)); }
-    catch (e) { toast('Could not store file: ' + (e.message || e)); continue; }
-    const meta = { id, name: f.name || (kind === 'receipt' ? 'receipt' : 'photo'), type: blob.type, size: blob.size, kind, added: Date.now() };
+    const path = M.filePath(user.id, itemId, id); let thumb = null;
+    try {
+      const tb = await Files.makeThumb(blob);
+      await cloud.upload(path, blob);
+      if (tb) { thumb = M.thumbPath(path); await cloud.upload(thumb, tb); await Cache.blobPut(id + ':t', tb); }
+      await Cache.blobPut(id, blob);
+    } catch (e) { toast('Upload failed: ' + (e.message || e), 3000); continue; }
+    const meta = { id, name: f.name || (kind === 'receipt' ? 'receipt' : 'photo'), type: blob.type, size: blob.size, kind, added: Date.now(), path, thumb };
     target.push(meta); added.push(id);
   }
   return added;
 }
 async function viewAtt(att) {
-  const rec = await Files.get(att.id); if (!rec) return toast('File missing from this device');
-  const url = URL.createObjectURL(rec.blob), isImg = /^image\//.test(rec.blob.type);
+  // Online: short-lived signed URL from the private bucket. Offline: the cached copy, if this device has one.
+  let url, dl, local = false;
+  if (cloud && !isOffline()) {
+    try { url = await cloud.signedUrl(att.path); dl = await cloud.signedUrl(att.path, { download: att.name }); } catch (e) { return toast('Could not open file: ' + (e.message || e)); }
+  } else {
+    const b = await Cache.blobGet(att.id); if (!b) return toast('Not available offline on this device');
+    url = dl = URL.createObjectURL(b); local = true;
+  }
+  const rec = { blob: { type: att.type, size: att.size } }, isImg = M.isImage(att.type);
   openLayer(`<div class="sheet-h"><div class="title">${esc(att.name)}</div><button class="iconbtn" data-act="closeTop" aria-label="Close">✕</button></div>
     <div class="viewer">${isImg ? `<img src="${url}" alt="${esc(att.name)}">` : `<iframe src="${url}" title="${esc(att.name)}"></iframe>`}
     <div class="row wrap"><span class="hint grow">${esc(att.kind === 'receipt' ? 'Receipt' : 'Photo')} · ${esc(rec.blob.type || 'file')} · ${fmtSize(rec.blob.size)}</span>
-    <a class="btn sm" href="${url}" target="_blank" rel="noopener">Open ↗</a><a class="btn sm" href="${url}" download="${esc(att.name)}">⤓ Save</a></div></div>`,
-  { cls: 'wide', onClose: () => setTimeout(() => URL.revokeObjectURL(url), 1000) });
+    <a class="btn sm" href="${url}" target="_blank" rel="noopener">Open ↗</a><a class="btn sm" href="${dl}" download="${esc(att.name)}">⤓ Save</a></div></div>`,
+  { cls: 'wide', onClose: () => { if (local) setTimeout(() => URL.revokeObjectURL(url), 1000); } });
 }
 
 // ---------- render ----------
@@ -132,7 +182,7 @@ const EMPTY_GLYPH = `<svg class="glyph" viewBox="0 0 64 64" aria-hidden="true"><
 function gearViewHTML() {
   if (!S.items.length) return `<div class="empty">${EMPTY_GLYPH}
     <h3>YOUR GEAR VAULT IS EMPTY</h3>
-    <p>Log every laptop, rack PC, interface and cable with serials, receipts and photos — then group them into road cases and build an ATA Carnet general list for your next show abroad. Everything stays on this device.</p>
+    <p>Log every laptop, rack PC, interface and cable with serials, receipts and photos — then group them into road cases and build an ATA Carnet general list for your next show abroad. Everything syncs privately to your own Supabase account behind a two-factor login.</p>
     <div class="lbl">Start with a category</div>
     <div class="chips">${S.settings.categories.map(c => `<button class="chip" data-act="newItem" data-cat="${esc(c)}">＋ ${esc(c)}</button>`).join('')}</div>
     <div class="row wrap" style="justify-content:center"><button class="btn primary" data-act="newItem">＋ Add first item</button><label class="btn ghost">⤒ Import CSV<input type="file" accept=".csv,text/csv" data-import="csv"></label><label class="btn ghost">⤒ Restore backup<input type="file" accept=".json,application/json" data-import="backup"></label></div>
@@ -249,11 +299,13 @@ function renderAtts() {
 }
 function discardEdit() {
   if (!ui.edit) return;
-  for (const id of ui.edit.newAtts) Files.del(id).catch(() => {});
+  const gone = ui.edit.d.atts.concat(ui.edit.removed || []).filter(a => ui.edit.newAtts.includes(a.id));
+  if (cloud) cloud.removeFiles(gone.flatMap(a => [a.path, a.thumb]).filter(Boolean));
   ui.edit = null;
 }
 function saveEdit() {
   const E = ui.edit; if (!E) return;
+  if (readOnly()) return toast('Offline — reconnect to save');
   const d = E.d;
   if (!String(d.name || '').trim() && !String(d.make || '').trim() && !String(d.model || '').trim()) { toast('Give it a name (or make / model)'); $('[data-f=name]')?.focus(); return; }
   const item = Store.sanitizeItem({ ...d, tags: Store.splitTags(d.tagsText), updated: Date.now() }, S.settings);
@@ -265,7 +317,9 @@ function saveEdit() {
     const has = k.itemIds.includes(item.id), want = E.kits.has(k.id);
     if (want && !has) k.itemIds.push(item.id); if (!want && has) k.itemIds = k.itemIds.filter(x => x !== item.id);
   }
-  for (const id of E.pendingDel) { Files.del(id).catch(() => {}); urlCache.delete(id); }
+  // Files added and removed in this same edit were never saved: delete them now. Everything else is removed by the sync.
+  const orphan = (E.removed || []).filter(a => E.newAtts.includes(a.id)); if (orphan.length) cloud.removeFiles(orphan.flatMap(a => [a.path, a.thumb]).filter(Boolean));
+  for (const id of E.pendingDel) urlCache.delete(id);
   ui.edit = null; persist(); closeLayer(undefined, true); render();
   toast(E.isNew ? `Added “${itemTitle(item)}”` : 'Saved');
 }
@@ -405,10 +459,21 @@ async function printCarnet() {
 function dataViewHTML() {
   const st = S.settings, nAtt = S.items.reduce((a, i) => a + i.atts.length, 0), used = new Map();
   S.items.forEach(i => used.set(i.category, (used.get(i.category) || 0) + 1));
-  return `<div class="pane-h"><h2>Data &amp; settings</h2><span class="hint">v${APP_VERSION} · everything stays on this device</span></div>
+  const legacy = Store.loadLegacy(), lf = legacyFlag();
+  return `<div class="pane-h"><h2>Data &amp; settings</h2><span class="hint">v${APP_VERSION} · synced to your Supabase account</span></div>
   <div class="cards" style="grid-template-columns:repeat(auto-fill,minmax(320px,1fr))">
+    <div class="card" id="accountCard"><div class="lbl">Account</div>
+      <p class="hint">Signed in as <b>${esc(user?.email || '—')}</b><br>Two-factor (TOTP): <b>required</b> ✓ — data is only readable at MFA level aal2.</p>
+      <p class="hint">${isOffline() ? 'Offline: showing the copy cached on this device. Editing is disabled until you reconnect.' : syncErr ? '⚠ Last save failed: ' + esc(syncErr.message || syncErr) : 'All changes save to the cloud automatically.'}</p>
+      <div class="row wrap"><button class="btn sm" data-act="refreshNow">↻ Refresh from cloud</button><button class="btn sm ghost" data-act="signOut">Sign out</button></div>
+      <p class="hint">Signing out also removes the offline copy from this browser.</p></div>
+    ${legacy && (legacy.items.length || legacy.kits.length || legacy.trips.length) ? `<div class="card" id="legacyCard"><div class="lbl">On-device gear (v1)</div>
+      <p class="hint">This browser still holds GearVault v1 data that lived only on this device: ${plural(legacy.items.length, 'item')}, ${plural(legacy.kits.length, 'kit')}, ${plural(legacy.trips.length, 'trip')}.</p>
+      ${lf && user && lf.uid === user.id ? `<p class="note">✓ Uploaded to the cloud ${esc(new Date(lf.at).toLocaleString())}. Check your gear, then remove the local copy.</p>
+        <div class="row wrap"><button class="btn sm" data-act="uploadLegacy">Upload again</button><button class="btn sm danger" data-act="deleteLegacy">Delete on-device copy</button></div>`
+        : '<div class="row wrap"><button class="btn sm primary" data-act="uploadLegacy">☁ Upload my on-device gear to the cloud</button></div>'}</div>` : ''}
     <div class="card"><div class="lbl">Full backup</div>
-      <p class="hint">One JSON file with all gear, kits, trips, settings <b>and every photo/receipt</b> (base64). Keep a copy in iCloud Drive / Files — browser storage can be cleared by iOS if the app isn't used for weeks.</p>
+      <p class="hint">One JSON file with all gear, kits, trips, settings <b>and every photo/receipt</b> (base64), downloaded from the cloud. Keep a copy somewhere safe (iCloud Drive / Files). Restore merges into, or replaces, your cloud data.</p>
       <p class="hint">${plural(S.items.length, 'item')} · ${plural(S.kits.length, 'kit')} · ${plural(S.trips.length, 'trip')} · ${plural(nAtt, 'file')}</p>
       <div class="row wrap"><button class="btn primary" data-act="exportBackup">⤓ Export backup</button><label class="btn">⤒ Restore backup<input type="file" accept=".json,application/json" data-import="backup"></label></div></div>
     <div class="card"><div class="lbl">Inventory spreadsheet (CSV)</div>
@@ -422,9 +487,10 @@ function dataViewHTML() {
     <div class="card"><div class="row between"><div class="lbl">Categories</div><button class="btn sm" data-act="addCategory">＋ Add</button></div>
       <div class="col">${st.categories.map((c, ix) => `<div class="row"><input class="inp" data-cat-ix="${ix}" value="${esc(c)}" aria-label="Category name"><span class="hint" style="min-width:34px;text-align:right">${used.get(c) || 0}</span><button class="iconbtn" data-act="delCategory" data-ix="${ix}" aria-label="Delete category">✕</button></div>`).join('')}</div>
       <p class="hint">Renaming updates every item in that category. Deleting moves its items to “Other”.</p></div>
-    <div class="card"><div class="lbl">Storage on this device</div><p class="hint" id="storageInfo">Checking…</p>
-      <div class="row wrap"><button class="btn sm" data-act="persistStorage">Keep data persistent</button></div></div>
-    <div class="card"><div class="lbl">Danger zone</div><p class="hint">Erase all gear, kits, trips and files from this device. Export a backup first.</p><button class="btn danger" data-act="eraseAll">Erase everything…</button></div>
+    <div class="card"><div class="lbl">Offline copy on this device</div><p class="hint" id="storageInfo">Checking…</p>
+      <p class="hint">GearVault caches your last synced data and the photos you've viewed so it opens read-only without a connection.</p>
+      <div class="row wrap"><button class="btn sm" data-act="persistStorage">Keep offline copy persistent</button></div></div>
+    <div class="card"><div class="lbl">Danger zone</div><p class="hint">Erase all gear, kits, trips, photos and receipts from your cloud account (every device). Export a backup first.</p><button class="btn danger" data-act="eraseAll">Erase everything…</button></div>
   </div>`;
 }
 async function storageInfo() {
@@ -438,10 +504,11 @@ async function exportBackup() {
   toast('Packing backup…');
   const files = {}; let missing = 0;
   for (const i of S.items) for (const a of i.atts) {
-    const rec = await Files.get(a.id).catch(() => null);
-    if (rec) files[a.id] = { name: a.name, type: rec.blob.type, data: await Files.blobToDataURL(rec.blob) }; else missing++;
+    let blob = await Cache.blobGet(a.id);
+    if (!blob && cloud && !isOffline()) { try { blob = await cloud.download(a.path); await Cache.blobPut(a.id, blob); } catch { blob = null; } }
+    if (blob) files[a.id] = { name: a.name, type: blob.type || a.type, data: await Files.blobToDataURL(blob) }; else missing++;
   }
-  const json = JSON.stringify({ app: 'ShowCrew GearVault', format: 1, version: APP_VERSION, exported: new Date().toISOString(), data: S, files });
+  const json = JSON.stringify({ app: 'ShowCrew GearVault', format: 2, version: APP_VERSION, exported: new Date().toISOString(), data: S, files });
   download(`GearVault_backup_${today()}.json`, new Blob([json], { type: 'application/json' }));
   toast(`Backup exported (${fmtSize(json.length)})${missing ? ` · ${missing} file(s) missing` : ''}`, 2600);
 }
@@ -449,37 +516,95 @@ async function importBackup(file) {
   let obj; try { obj = JSON.parse(await file.text()); } catch { return toast('That file is not valid JSON'); }
   let st; try { st = Store.sanitizeState(obj.data || obj); } catch (e) { return toast('Import failed: ' + e.message); }
   const files = obj.files || {}, nF = Object.keys(files).length;
+  if (readOnly()) return toast('Offline — connect to restore a backup');
   const mode = await choose('Restore backup', `<p class="hint">${plural(st.items.length, 'item')}, ${plural(st.kits.length, 'kit')}, ${plural(st.trips.length, 'trip')}, ${plural(nF, 'file')}${obj.exported ? ` · exported ${esc(obj.exported.slice(0, 10))}` : ''}.</p>`,
-    [['merge', 'Merge into current data', 'primary'], ['replace', 'Replace everything on this device', 'danger']]);
+    [['merge', 'Merge into my cloud data', 'primary'], ['replace', 'Replace ALL my cloud data with this backup', 'danger']]);
   if (!mode) return;
-  toast('Restoring…');
-  if (mode === 'replace') { await Files.clear(); urlCache.clear(); S = st; }
+  const r = await bringIn(st, id => (files[id] ? Files.dataURLToBlob(files[id].data) : null), mode);
+  toast(`Restored ${plural(st.items.length, 'item')}${nF ? ` + ${r.files} files` : ''}${r.bad ? ` (${r.bad} failed)` : ''}`, 2600);
+}
+/** Merge or replace cloud data with `st` (from a backup or v1 on-device data). getBlob(oldAttId) → Blob|null|Promise. */
+async function bringIn(st, getBlob, mode = 'merge') {
+  toast('Uploading to the cloud…', 4000); renderBadge('saving');
+  const map = await M.remapIds(st, user.id), back = new Map([...map].map(([o, n]) => [n, o]));
+  let files = 0, bad = 0;
+  for (const i of st.items) for (const a of i.atts.slice()) {
+    try {
+      const blob = await getBlob(back.get(a.id) || a.id);
+      if (!blob) { i.atts = i.atts.filter(x => x !== a); bad++; continue; }
+      a.type = blob.type || a.type; a.size = blob.size; a.path = M.filePath(user.id, i.id, a.id); a.thumb = null;
+      await cloud.upload(a.path, blob); await Cache.blobPut(a.id, blob);
+      const tb = await Files.makeThumb(blob);
+      if (tb) { a.thumb = M.thumbPath(a.path); await cloud.upload(a.thumb, tb); await Cache.blobPut(a.id + ':t', tb); }
+      urlCache.delete(a.id); files++;
+    } catch (e) { console.warn('file upload failed', e); i.atts = i.atts.filter(x => x !== a); bad++; }
+  }
+  if (mode === 'replace') S = st;
   else {
     const up = (arr, x) => { const ix = arr.findIndex(y => y.id === x.id); if (ix >= 0) arr[ix] = x; else arr.push(x); };
     st.items.forEach(x => up(S.items, x)); st.kits.forEach(x => up(S.kits, x)); st.trips.forEach(x => up(S.trips, x));
     S.settings.categories = [...new Set([...S.settings.categories, ...st.settings.categories])];
   }
-  let bad = 0;
-  for (const [id, f] of Object.entries(files)) { try { const b = Files.dataURLToBlob(f.data); await Files.put(id, b, await Files.makeThumb(b)); urlCache.delete(id); } catch { bad++; } }
-  persist(); ui.tripId = null; render();
-  toast(`Restored ${plural(st.items.length, 'item')}${nF ? ` + ${nF - bad} files` : ''}${bad ? ` (${bad} failed)` : ''}`, 2600);
+  ui.tripId = null; render();
+  clearTimeout(syncT); await runSync();
+  return { files, bad, ok: !syncErr };
 }
 async function importCSV(file) {
+  if (readOnly()) return toast('Offline — connect to import');
   let rows; try { rows = C.parseInventoryCSV(await file.text()); } catch (e) { return toast('CSV import failed: ' + e.message, 3000); }
   let added = 0, updated = 0;
   for (const o of rows) {
     if (o.weightUnit) o.weightUnit = /^lb/i.test(o.weightUnit) ? 'lb' : 'kg';
     const ex = o.id && S.items.find(i => i.id === o.id);
     if (ex) { const clean = Object.fromEntries(Object.entries(o).filter(([, v]) => v !== '')); Object.assign(ex, Store.sanitizeItem({ ...ex, ...clean, atts: ex.atts, updated: Date.now() }, S.settings)); updated++; }
-    else { const it = Store.sanitizeItem({ ...o, id: o.id || undefined, category: o.category || 'Other' }, S.settings); if (S.items.some(i => i.id === it.id)) it.id = Store.uid('itm'); S.items.push(it); added++; }
+    else { const it = Store.sanitizeItem({ ...o, id: o.id && M.UUID_RE.test(o.id) ? o.id : undefined, category: o.category || 'Other' }, S.settings); if (S.items.some(i => i.id === it.id)) it.id = Store.uid('itm'); S.items.push(it); added++; }
   }
   for (const i of S.items) if (!S.settings.categories.includes(i.category)) S.settings.categories.push(i.category);
   persist(); render(); toast(`CSV: ${added} added, ${updated} updated`, 2400);
 }
 
 // ---------- actions ----------
+const legacyFlag = () => { try { return JSON.parse(localStorage.getItem(Store.LEGACY_UPLOADED_KEY) || 'null'); } catch { return null; } };
+async function offerLegacyUpload(force = false) {
+  const legacy = Store.loadLegacy(); if (!legacy || !(legacy.items.length || legacy.kits.length || legacy.trips.length) || readOnly()) return;
+  const lf = legacyFlag();
+  if (!force && ((lf && lf.uid === user.id) || sessionStorage.getItem('gv.legacyLater'))) return;
+  const nF = legacy.items.reduce((a, i) => a + i.atts.length, 0);
+  const ch = force ? 'upload' : await choose('Gear found on this device', `<p class="hint">This browser has GearVault data that was stored only on this device: <b>${plural(legacy.items.length, 'item')}</b>, ${plural(legacy.kits.length, 'kit')}, ${plural(legacy.trips.length, 'trip')}, ${plural(nF, 'photo/receipt')}.</p><p class="hint">Upload it to your cloud account? The on-device copy is kept until you delete it in <b>Data</b>. Uploading twice won't create duplicates.</p>`,
+    [['upload', '☁ Upload my on-device gear to the cloud', 'primary'], ['later', 'Not now']]);
+  if (ch !== 'upload') { sessionStorage.setItem('gv.legacyLater', '1'); return; }
+  const r = await bringIn(legacy, async id => (await Files.get(id).catch(() => null))?.blob || null, 'merge');
+  if (r.ok) { localStorage.setItem(Store.LEGACY_UPLOADED_KEY, JSON.stringify({ uid: user.id, at: Date.now(), items: legacy.items.length, files: r.files })); toast(`Uploaded ${plural(legacy.items.length, 'item')} + ${plural(r.files, 'file')} to the cloud`, 3000); }
+  else toast('Upload not finished — it will retry; you can also run it again from Data', 3500);
+  render();
+}
+async function refreshFromCloud(force = false) {
+  if (!cloud || isOffline() || syncing || unsaved() || (!force && (ui.edit || layers.length || $('#printRoot').classList.contains('show')))) return false;
+  try {
+    const n = await cloud.loadAll();
+    const changed = M.diff(M.snapshotOf(M.rowsFromState(S, user.id)), M.rowsFromState(n, user.id)).count > 0;
+    if (changed) { S = n; render(); }
+    await saveCache(); renderBadge(); return changed;
+  } catch (e) { console.warn('refresh failed', e); if (force) toast('Refresh failed: ' + (e.message || e)); return false; }
+}
+function clearLocalSession() { for (const k of Object.keys(localStorage)) if (/^sb-.*-auth-token/.test(k)) localStorage.removeItem(k); localStorage.removeItem(LAST_UID); }
+// Actions that change data — blocked while offline / read-only.
+const MUTATING = new Set(['newItem', 'saveItem', 'dupItem', 'deleteItem', 'removeAtt', 'newKit', 'saveKit', 'deleteKit', 'newTrip', 'deleteTrip', 'toggleTripKit',
+  'pickTripItems', 'saveTripItems', 'removeTripItem', 'excludeLine', 'restoreLine', 'addCategory', 'delCategory', 'eraseAll', 'uploadLegacy']);
+
 const ACTIONS = {
   closeTop: () => closeLayer(),
+  refreshNow: async () => { if (isOffline()) return toast('Offline'); const ch = await refreshFromCloud(true); toast(ch ? 'Updated from the cloud' : 'Already up to date'); },
+  signOut: async () => {
+    if (unsaved() && !(await confirmBox('Some changes are not saved to the cloud yet. Sign out anyway?', 'Sign out'))) return;
+    try { if (sb) await sb.auth.signOut(); } catch { }
+    clearLocalSession(); await Cache.clearAll().catch(() => {}); location.reload();
+  },
+  uploadLegacy: () => offerLegacyUpload(true),
+  deleteLegacy: async () => {
+    if (!(await confirmBox('Delete the on-device v1 copy?', 'Delete local copy', '<p class="hint">Only the old copy stored in this browser is removed. Your cloud data is not touched.</p>'))) return;
+    localStorage.removeItem(Store.LEGACY_KEY); localStorage.removeItem(Store.LEGACY_UPLOADED_KEY); await Files.clear().catch(() => {}); render(); toast('On-device copy deleted');
+  },
   newItem: el => { const it = Store.makeItem(S.settings); if (el?.dataset.cat) it.category = el.dataset.cat; openItemEditor(it, true); },
   editItem: el => { const it = S.items.find(i => i.id === el.dataset.id); if (it) openItemEditor(it); },
   cancelEdit: () => closeLayer(),
@@ -487,16 +612,16 @@ const ACTIONS = {
   dupItem: () => { const src = ui.edit.d; closeLayer(); const it = Store.sanitizeItem({ ...src, tags: Store.splitTags(src.tagsText), id: Store.uid('itm'), serial: '', atts: [], name: (src.name || '') + ' (copy)', created: Date.now() }, S.settings); openItemEditor(it, true); toast('Copy — enter its serial number'); },
   deleteItem: async () => {
     const d = ui.edit.d; if (!(await confirmBox(`Delete “${itemTitle(d)}”?`, 'Delete', '<p class="hint">Its photos and receipts are deleted too. It is removed from kits and trips.</p>'))) return;
-    const atts = [...d.atts.map(a => a.id), ...ui.edit.pendingDel, ...(S.items.find(i => i.id === d.id)?.atts || []).map(a => a.id)];
+    const unsavedAtts = d.atts.concat(ui.edit.removed || []).filter(a => ui.edit.newAtts.includes(a.id));
+    cloud.removeFiles(unsavedAtts.flatMap(a => [a.path, a.thumb]).filter(Boolean)); // saved files go with the sync
     S.items = S.items.filter(i => i.id !== d.id);
     S.kits.forEach(k => { k.itemIds = k.itemIds.filter(x => x !== d.id); });
     S.trips.forEach(t => { t.itemIds = t.itemIds.filter(x => x !== d.id); t.excluded = t.excluded.filter(x => x !== d.id); });
-    for (const id of new Set(atts)) Files.del(id).catch(() => {});
     ui.edit = null; closeLayer(undefined, true); persist(); render(); toast('Deleted');
   },
   toggleEditKit: el => { const s = ui.edit.kits, id = el.dataset.id; s.has(id) ? s.delete(id) : s.add(id); el.classList.toggle('on', s.has(id)); },
   viewAtt: (el, e) => { if (e.target.closest('.x')) return; const a = ui.edit?.d.atts.find(x => x.id === el.dataset.id); if (a) viewAtt(a); },
-  removeAtt: async el => { const E = ui.edit, a = E.d.atts.find(x => x.id === el.dataset.id); if (!a) return; if (!(await confirmBox(`Remove ${a.kind} “${a.name}”?`, 'Remove'))) return; E.d.atts = E.d.atts.filter(x => x !== a); E.pendingDel.push(a.id); renderAtts(); },
+  removeAtt: async el => { const E = ui.edit, a = E.d.atts.find(x => x.id === el.dataset.id); if (!a) return; if (!(await confirmBox(`Remove ${a.kind} “${a.name}”?`, 'Remove'))) return; E.d.atts = E.d.atts.filter(x => x !== a); E.pendingDel.push(a.id); (E.removed = E.removed || []).push(a); renderAtts(); },
   clearFilters: () => { Object.assign(ui, { q: '', fCat: '', fStatus: '', fTag: '' }); render(); },
   exportInvCSV: () => { download(`GearVault_inventory_${today()}.csv`, new Blob([C.inventoryCSV(S.items)], { type: 'text/csv;charset=utf-8' })); toast(`Exported ${plural(S.items.length, 'item')}`); },
   csvTemplate: () => download('GearVault_inventory_template.csv', new Blob([C.toCSV([C.INV_COLS.map(c => c[0])])], { type: 'text/csv;charset=utf-8' })),
@@ -527,7 +652,7 @@ const ACTIONS = {
   },
   saveTripItems: el => { const o = el.closest('.overlay'), t = o._trip; t.itemIds = pickedIds(o); t.excluded = t.excluded.filter(id => !t.itemIds.includes(id)); persist(); closeLayer(o, true); render(); },
   removeTripItem: el => { const t = trip(); t.itemIds = t.itemIds.filter(x => x !== el.dataset.id); persist(); render(); },
-  excludeLine: el => { const t = trip(), id = el.dataset.id; if (t.itemIds.includes(id) && !t.kitIds.some(k => S.kits.find(x => x.id === k)?.itemIds.includes(id))) t.itemIds = t.itemIds.filter(x => x !== id); else t.excluded.push(id); persist(); render(); },
+  excludeLine: el => { const t = trip(), id = el.dataset.id; t.itemIds = t.itemIds.filter(x => x !== id); if (t.kitIds.some(k => S.kits.find(x => x.id === k)?.itemIds.includes(id)) && !t.excluded.includes(id)) t.excluded.push(id); persist(); render(); },
   restoreLine: el => { const t = trip(); t.excluded = t.excluded.filter(x => x !== el.dataset.id); persist(); render(); },
   previewCarnet: () => { if (!C.buildGeneralList(S, trip()).lines.length) return toast('Add kits or items first'); showPaper(); },
   closePaper: () => closePaper(),
@@ -535,7 +660,7 @@ const ACTIONS = {
   csvCarnet: () => exportCarnetCSV(),
   // data
   exportBackup: () => exportBackup(),
-  addCategory: () => { S.settings.categories.push('New category'); persist(); render(); const ins = $$('[data-cat-ix]'); const last = ins[ins.length - 1]; last?.focus(); last?.select(); },
+  addCategory: () => { let n = 'New category', k = 2; while (S.settings.categories.includes(n)) n = `New category ${k++}`; S.settings.categories.push(n); persist(); render(); const ins = $$('[data-cat-ix]'); const last = ins[ins.length - 1]; last?.focus(); last?.select(); },
   delCategory: async el => {
     const ix = +el.dataset.ix, c = S.settings.categories[ix], n = S.items.filter(i => i.category === c).length;
     if (n && !(await confirmBox(`Delete category “${c}”?`, 'Delete', `<p class="hint">${plural(n, 'item')} will move to “Other”.</p>`))) return;
@@ -544,14 +669,18 @@ const ACTIONS = {
   },
   persistStorage: async () => { const ok = navigator.storage?.persist ? await navigator.storage.persist() : false; toast(ok ? 'Storage marked persistent' : 'Browser declined — install to Home Screen and keep backups'); storageInfo(); },
   eraseAll: async () => {
-    if (!(await confirmBox('Erase ALL GearVault data on this device?', 'Erase everything', '<p class="warn">This cannot be undone. Export a backup first.</p>'))) return;
-    await Files.clear().catch(() => {}); urlCache.clear(); S = Store.emptyState(); ui.tripId = null; persist(); render(); toast('All data erased');
+    if (!(await confirmBox('Erase ALL GearVault data in the cloud?', 'Erase everything', '<p class="warn">Deletes every item, kit, trip, photo and receipt in your Supabase account — on every device. This cannot be undone. Export a backup first.</p>'))) return;
+    const keep = S.settings; S = Store.emptyState(); S.settings = keep; ui.tripId = null; urlCache.clear(); await Cache.clearAll().catch(() => {});
+    render(); clearTimeout(syncT); await runSync(); toast(syncErr ? 'Erase not finished — will retry' : 'All cloud data erased');
   },
 };
 
 document.addEventListener('click', e => {
   const el = e.target.closest('[data-act]'); if (!el) return;
-  const fn = ACTIONS[el.dataset.act]; if (fn) { e.preventDefault(); fn(el, e); }
+  const fn = ACTIONS[el.dataset.act]; if (!fn) return;
+  e.preventDefault();
+  if (MUTATING.has(el.dataset.act) && readOnly()) return toast(isOffline() ? 'Offline — read-only. Reconnect to make changes.' : 'Not connected to the cloud');
+  fn(el, e);
 });
 document.addEventListener('keydown', e => {
   if (e.key === 'Escape') { if ($('#printRoot').classList.contains('show')) return closePaper(); if (layers.length) closeLayer(); }
@@ -573,8 +702,11 @@ document.addEventListener('change', async e => {
   if (el.dataset.attkind && ui.edit) {
     const files = [...el.files]; el.value = ''; if (!files.length) return;
     toast(`Adding ${plural(files.length, 'file')}…`);
-    const ids = await addFiles(files, el.dataset.attkind, ui.edit.d.atts); ui.edit.newAtts.push(...ids); renderAtts();
+    const ids = await addFiles(files, el.dataset.attkind, ui.edit.d.atts, ui.edit.d.id); ui.edit.newAtts.push(...ids); renderAtts();
     if (ids.length) toast(`Attached ${plural(ids.length, el.dataset.attkind)}`); return;
+  }
+  if ((el.dataset.import || el.dataset.tf || el.dataset.set || el.dataset.catIx != null || el.dataset.attkind) && readOnly()) {
+    if (el.type === 'file') el.value = ''; toast('Offline — read-only. Reconnect to make changes.'); if (!el.dataset.attkind) render(); return;
   }
   if (el.dataset.import) { const f = el.files[0]; el.value = ''; if (!f) return; return el.dataset.import === 'csv' ? importCSV(f) : importBackup(f); }
   if (el.dataset.tf) {
@@ -593,6 +725,50 @@ document.addEventListener('change', async e => {
 });
 window.addEventListener('afterprint', () => { /* keep preview open so the user can print again or close */ });
 
-render();
+// ---------- boot: config → (offline cache | sign-in → TOTP → aal2) → load → app ----------
+function unlock() { document.body.classList.remove('locked'); $('#auth').hidden = true; render(); renderBadge(); }
+function fatal(title, e, allowSignOut = true) {
+  const root = $('#auth'); root.hidden = false; document.body.classList.add('locked');
+  root.innerHTML = `<div class="auth-card pane"><div class="lbl auth-title">${esc(title)}</div><p class="warn">${esc(e?.message || e)}</p>
+    <p class="hint">If this is a new Supabase project, make sure <b>supabase/migrations/0001_init.sql</b> ran in the SQL editor.</p>
+    <div class="row wrap"><button class="btn primary" onclick="location.reload()">Retry</button>${allowSignOut ? '<button class="btn ghost" data-act="signOut">Sign out</button>' : ''}</div></div>`;
+}
+async function openFromCache() {
+  const c = await Cache.kvGet('state').catch(() => null), uid = localStorage.getItem(LAST_UID);
+  if (!c || !uid || c.uid !== uid) return false;
+  S = Store.sanitizeState(c.S); user = { id: c.uid, email: c.email }; bootOffline = true; unlock();
+  toast('Offline — showing your last synced copy (read-only)', 2800); return true;
+}
+async function boot() {
+  const root = $('#auth');
+  const factory = window.__GV_TEST_SUPABASE__; // test hook: tools/fake-supabase.js
+  const configured = !!factory || (!/YOUR-PROJECT-REF/.test(CFG.SUPABASE_URL) && !/YOUR-ANON/.test(CFG.SUPABASE_ANON_KEY));
+  if (!configured) return Auth.showSetup(root);
+  if (!navigator.onLine) { if (!(await openFromCache())) Auth.showOfflineNoSession(root); return; }
+  try {
+    sb = factory ? factory(CFG) : window.supabase.createClient(CFG.SUPABASE_URL, CFG.SUPABASE_ANON_KEY, { auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: true } });
+  } catch (e) { return fatal('Could not start Supabase', e, false); }
+  const res = await Auth.ensureAal2(sb, root, { allowSignup: !!CFG.ALLOW_SIGNUP, recovery: /type=recovery/.test(location.hash) });
+  user = res.user; localStorage.setItem(LAST_UID, user.id);
+  const cached = await Cache.kvGet('state').catch(() => null);
+  if (cached && cached.uid !== user.id) await Cache.clearAll().catch(() => {}); // another account used this browser before
+  cloud = createCloud(sb, user, CFG.STORAGE_BUCKET);
+  try { S = await cloud.loadAll(); }
+  catch (e) {
+    console.warn('GearVault: cloud load failed', e);
+    if (cached && cached.uid === user.id) { S = Store.sanitizeState(cached.S); bootOffline = true; unlock(); toast('Could not reach the cloud — showing your last synced copy (read-only)', 3500); return; }
+    return fatal('Could not load your gear', e);
+  }
+  unlock(); await saveCache();
+  if (cloud.pending(S)) runSync(); // first run writes default settings + categories
+  offerLegacyUpload();
+}
+$('#netBadge').addEventListener('click', () => { if (bootOffline && navigator.onLine) location.reload(); else if (syncErr) runSync(); else ui.view = 'data', render(); });
+window.addEventListener('online', () => { renderBadge(); if (bootOffline) { toast('Back online — tap the badge to reconnect', 3500); $('#netBadge').textContent = 'OFFLINE · TAP TO RECONNECT'; } else { runSync().then(() => refreshFromCloud()); } });
+window.addEventListener('offline', () => { renderBadge(); toast('Offline — read-only until you reconnect'); });
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') refreshFromCloud(); });
+window.addEventListener('beforeunload', e => { if (unsaved()) { e.preventDefault(); e.returnValue = ''; } });
+
 if ('serviceWorker' in navigator && location.protocol !== 'file:') navigator.serviceWorker.register('./sw.js').catch(e => console.warn('SW registration failed', e));
-window.__gv = { get S() { return S; }, ui, render, Files, C, Store, layers };
+window.__gv = { get S() { return S; }, ui, render, Files, C, Store, M, Cache, layers, get cloud() { return cloud; }, get user() { return user; }, runSync, refreshFromCloud, readOnly };
+boot();

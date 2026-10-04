@@ -209,6 +209,27 @@ table.ro { width: 100%; border-collapse: collapse; font-size: 14px; }
 #toast { position: fixed; left: 50%; bottom: calc(24px + var(--sab)); transform: translate(-50%, 20px); opacity: 0; pointer-events: none; z-index: 80; transition: .2s; background: #0b1a2c; border: 1px solid var(--cyan); color: #fff; padding: 10px 16px; border-radius: 22px; font: 600 14px var(--mono); box-shadow: 0 0 20px rgba(0, 229, 255, .35); max-width: 90vw; text-align: center; }
 #toast.show { opacity: 1; transform: translate(-50%, 0); }
 
+/* ---------- auth / lock screen / cloud badge ---------- */
+body.locked .topbar, body.locked #app { display: none; }
+.auth { min-height: 100dvh; display: flex; align-items: flex-start; justify-content: center; padding: calc(48px + var(--sat)) calc(14px + var(--sar)) calc(24px + var(--sab)) calc(14px + var(--sal)); }
+.auth[hidden] { display: none; }
+.auth-card { width: min(440px, 100%); padding: 22px; display: flex; flex-direction: column; gap: 14px; }
+.auth-brand { display: flex; align-items: center; gap: 12px; margin-bottom: 4px; }
+.auth-title { color: var(--cyan); }
+.auth-foot { display: flex; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.auth-foot .linkish, .auth .linkish { min-height: var(--tap); display: inline-flex; align-items: center; }
+.qr { align-self: center; background: #fff; padding: 10px; border-radius: 12px; box-shadow: 0 0 24px rgba(0, 229, 255, .35); }
+.qr img { width: 200px; height: 200px; display: block; }
+.inp.code { font-size: 26px; letter-spacing: .45em; text-align: center; }
+.inp.mono-sm { font-size: 13px; letter-spacing: .08em; }
+.netbadge { min-height: 32px; padding: 0 10px; border-radius: 16px; border: 1px solid rgba(20, 241, 198, .4); background: rgba(20, 241, 198, .07); color: var(--teal); font: 700 10.5px var(--mono); letter-spacing: .14em; cursor: pointer; white-space: nowrap; }
+.netbadge::before { content: "●"; margin-right: 6px; }
+.netbadge.off { color: var(--amber); border-color: rgba(255, 176, 32, .55); background: rgba(255, 176, 32, .1); }
+.netbadge.busy { color: var(--cyan); border-color: var(--edge2); } .netbadge.busy::before { animation: blink 1s infinite; }
+.netbadge.err { color: #ffc6cc; border-color: rgba(255, 90, 106, .6); background: rgba(255, 90, 106, .1); }
+@keyframes blink { 50% { opacity: .2; } }
+body.readonly #addBtn, body.readonly [data-act=newItem], body.readonly [data-act=newKit], body.readonly [data-act=newTrip] { opacity: .4; }
+
 /* ---------- carnet paper (screen preview + print) ---------- */
 #printRoot { display: none; }
 #printRoot.show { display: block; position: fixed; inset: 0; z-index: 60; overflow: auto; background: #2a3340; padding: calc(10px + var(--sat)) calc(10px + var(--sar)) calc(20px + var(--sab)) calc(10px + var(--sal)); }
@@ -255,7 +276,8 @@ table.ro { width: 100%; border-collapse: collapse; font-size: 14px; }
   .topbar { flex-wrap: wrap; gap: 8px; }
   .logo { width: 30px; height: 30px; } .brand-main { font-size: 16px; }
   #nav { order: 3; flex-basis: 100%; display: flex; } #nav button { flex: 1; padding: 0 4px; font-size: 13px; }
-  #addBtn { margin-left: auto; min-height: 40px; padding: 0 12px; }
+  #addBtn { min-height: 40px; padding: 0 12px; } #addBtn span { display: none; }
+  .netbadge { margin-left: auto; min-height: 36px; font-size: 9.5px; letter-spacing: .08em; padding: 0 8px; }
   #app { padding-top: 8px; gap: 8px; }
   .dash, #tripLines .hud-stat { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; } .big { font-size: 17px; }
   #view { padding: 10px; }

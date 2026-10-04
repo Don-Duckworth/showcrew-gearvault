@@ -1,7 +1,9 @@
 // ShowCrew GearVault — persistence (localStorage for records; blobs live in IndexedDB, see files.js) + data model helpers.
-const KEY = 'showcrew.gearvault.v1';
+const KEY = 'showcrew.gearvault.v1'; // v1 on-device data (read only for the cloud upload offer)
 
-export const uid = (p = 'id') => p + '_' + Math.random().toString(36).slice(2, 9) + Date.now().toString(36).slice(-4);
+// v2: ids are UUIDs (Postgres uuid primary keys). The prefix argument is kept for call-site readability only.
+export const uid = (_p = 'id') => (globalThis.crypto?.randomUUID ? crypto.randomUUID()
+  : 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, c => { const r = (crypto.getRandomValues(new Uint8Array(1))[0] & 15); return (c === 'x' ? r : (r & 3) | 8).toString(16); }));
 export const DEFAULT_CATEGORIES = [
   'Laptop – Mac', 'Laptop – PC', 'Rack-mount PC', 'Mac Studio / desktop', 'Audio / sound device', 'Network (e.g. Starlink Mini)',
   'Docking station / hub', 'Display', 'Cable / accessory', 'Case', 'Other',
@@ -53,7 +55,7 @@ export function sanitizeItem(i, settings = defaultSettings()) {
     price: numOrNull(i.price), currency: (s(i.currency, 3) || base.currency).toUpperCase(), currentValue: numOrNull(i.currentValue),
     vendor: s(i.vendor, 120), origin: s(i.origin, 80), weight: numOrNull(i.weight), weightUnit: i.weightUnit === 'lb' ? 'lb' : 'kg',
     notes: s(i.notes, 4000), tags: splitTags(i.tags), status: st,
-    atts: Array.isArray(i.atts) ? i.atts.filter(a => a && a.id).map(a => ({ id: s(a.id, 60), name: s(a.name, 200) || 'file', type: s(a.type, 80), size: +a.size || 0, kind: a.kind === 'receipt' ? 'receipt' : 'photo', added: +a.added || Date.now() })) : [],
+    atts: Array.isArray(i.atts) ? i.atts.filter(a => a && a.id).map(a => ({ id: s(a.id, 60), name: s(a.name, 200) || 'file', type: s(a.type, 80), size: +a.size || 0, kind: a.kind === 'receipt' ? 'receipt' : 'photo', added: +a.added || Date.now(), path: a.path ? s(a.path, 300) : undefined, thumb: a.thumb ? s(a.thumb, 300) : null })) : [],
     created: +i.created || Date.now(), updated: +i.updated || Date.now(),
   };
 }
@@ -69,12 +71,10 @@ export function sanitizeState(d) {
   return { v: 1, items, kits, trips, settings };
 }
 
-export function load() {
+/** v1 (on-device, pre-cloud) data in this browser, or null. */
+export function loadLegacy() {
   try { const raw = localStorage.getItem(KEY); return raw ? sanitizeState(JSON.parse(raw)) : null; }
-  catch (e) { console.warn('GearVault: could not load saved data', e); return null; }
+  catch (e) { console.warn('GearVault: could not read v1 data', e); return null; }
 }
-export function save(S) {
-  try { localStorage.setItem(KEY, JSON.stringify(S)); return true; }
-  catch (e) { console.error('GearVault: save failed', e); return false; }
-}
-export const STORAGE_KEY = KEY;
+export const LEGACY_KEY = KEY;
+export const LEGACY_UPLOADED_KEY = KEY + '.uploaded';
