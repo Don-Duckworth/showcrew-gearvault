@@ -151,13 +151,17 @@ create index if not exists items_owner_idx       on public.items (owner_id);
 create index if not exists attachments_owner_idx on public.attachments (owner_id);
 create index if not exists attachments_item_idx  on public.attachments (owner_id, item_id);
 create index if not exists kits_owner_idx        on public.kits (owner_id);
-create index if not exists kit_items_owner_idx   on public.kit_items (owner_id);
+-- Join tables: one index per composite FK; the (owner_id, parent) index also serves owner_id-only lookups.
+create index if not exists kit_items_kit_idx     on public.kit_items (owner_id, kit_id);
 create index if not exists kit_items_item_idx    on public.kit_items (owner_id, item_id);
 create index if not exists trips_owner_idx       on public.trips (owner_id);
-create index if not exists trip_kits_owner_idx   on public.trip_kits (owner_id);
+create index if not exists trip_kits_trip_idx    on public.trip_kits (owner_id, trip_id);
 create index if not exists trip_kits_kit_idx     on public.trip_kits (owner_id, kit_id);
-create index if not exists trip_items_owner_idx  on public.trip_items (owner_id);
+create index if not exists trip_items_trip_idx   on public.trip_items (owner_id, trip_id);
 create index if not exists trip_items_item_idx   on public.trip_items (owner_id, item_id);
+drop index if exists public.kit_items_owner_idx;   -- superseded (v2.0.0 pre-release)
+drop index if exists public.trip_kits_owner_idx;
+drop index if exists public.trip_items_owner_idx;
 
 -- ---------- updated_at triggers, privileges, RLS ----------
 do $$
@@ -185,7 +189,7 @@ begin
     -- MFA required for everything (restrictive => AND-ed with the policies above).
     execute format('drop policy if exists "require mfa (aal2)" on public.%I', t);
     execute format($p$create policy "require mfa (aal2)" on public.%I as restrictive for all to authenticated
-                     using ((select auth.jwt() ->> 'aal') = 'aal2') with check ((select auth.jwt() ->> 'aal') = 'aal2')$p$, t);
+                     using (((select auth.jwt()) ->> 'aal') = 'aal2') with check (((select auth.jwt()) ->> 'aal') = 'aal2')$p$, t);
   end loop;
 end $$;
 
@@ -204,15 +208,15 @@ drop policy if exists "gear-files: owner delete" on storage.objects;
 drop policy if exists "gear-files: require mfa (aal2)" on storage.objects;
 
 create policy "gear-files: owner read" on storage.objects for select to authenticated
-  using (bucket_id = 'gear-files' and (storage.foldername(name))[1] = (select auth.uid())::text and (select auth.jwt() ->> 'aal') = 'aal2');
+  using (bucket_id = 'gear-files' and (storage.foldername(name))[1] = (select auth.uid())::text and ((select auth.jwt()) ->> 'aal') = 'aal2');
 create policy "gear-files: owner insert" on storage.objects for insert to authenticated
-  with check (bucket_id = 'gear-files' and (storage.foldername(name))[1] = (select auth.uid())::text and (select auth.jwt() ->> 'aal') = 'aal2');
+  with check (bucket_id = 'gear-files' and (storage.foldername(name))[1] = (select auth.uid())::text and ((select auth.jwt()) ->> 'aal') = 'aal2');
 create policy "gear-files: owner update" on storage.objects for update to authenticated
-  using (bucket_id = 'gear-files' and (storage.foldername(name))[1] = (select auth.uid())::text and (select auth.jwt() ->> 'aal') = 'aal2')
-  with check (bucket_id = 'gear-files' and (storage.foldername(name))[1] = (select auth.uid())::text and (select auth.jwt() ->> 'aal') = 'aal2');
+  using (bucket_id = 'gear-files' and (storage.foldername(name))[1] = (select auth.uid())::text and ((select auth.jwt()) ->> 'aal') = 'aal2')
+  with check (bucket_id = 'gear-files' and (storage.foldername(name))[1] = (select auth.uid())::text and ((select auth.jwt()) ->> 'aal') = 'aal2');
 create policy "gear-files: owner delete" on storage.objects for delete to authenticated
-  using (bucket_id = 'gear-files' and (storage.foldername(name))[1] = (select auth.uid())::text and (select auth.jwt() ->> 'aal') = 'aal2');
+  using (bucket_id = 'gear-files' and (storage.foldername(name))[1] = (select auth.uid())::text and ((select auth.jwt()) ->> 'aal') = 'aal2');
 -- Belt and braces: restrictive aal2 gate scoped to this bucket only (other buckets in the project are unaffected).
 create policy "gear-files: require mfa (aal2)" on storage.objects as restrictive for all to authenticated
-  using (bucket_id <> 'gear-files' or (select auth.jwt() ->> 'aal') = 'aal2')
-  with check (bucket_id <> 'gear-files' or (select auth.jwt() ->> 'aal') = 'aal2');
+  using (bucket_id <> 'gear-files' or ((select auth.jwt()) ->> 'aal') = 'aal2')
+  with check (bucket_id <> 'gear-files' or ((select auth.jwt()) ->> 'aal') = 'aal2');

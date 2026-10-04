@@ -9,6 +9,18 @@ Live: https://don-duckworth.github.io/showcrew-gearvault/ (GitHub Pages, `main` 
 
 ---
 
+## Status of Don's project
+
+Project **ShowCrew GearVault** (ref `ggtkglxvuxvmuqtpvlgs`, us-east-2). Steps 1, 2 and 7 below are **done**: the schema is applied
+(migrations `init_gearvault` + `init_gearvault_advisor_fixes`) and `js/config.js` holds the project URL and the `sb_publishable_…` key.
+Still to do in the dashboard (steps 3–6):
+
+- URL configuration (Site URL + Redirect URLs): https://supabase.com/dashboard/project/ggtkglxvuxvmuqtpvlgs/auth/url-configuration
+- MFA (check TOTP is enabled): https://supabase.com/dashboard/project/ggtkglxvuxvmuqtpvlgs/auth/mfa
+- Add your user (Auto Confirm): https://supabase.com/dashboard/project/ggtkglxvuxvmuqtpvlgs/auth/users
+- Turn off "Allow new users to sign up": https://supabase.com/dashboard/project/ggtkglxvuxvmuqtpvlgs/auth/providers
+- Optional custom SMTP: https://supabase.com/dashboard/project/ggtkglxvuxvmuqtpvlgs/auth/smtp
+
 ## One-time Supabase setup (≈10 minutes)
 
 1. **Create the project** — https://supabase.com/dashboard → *New project* (any name, e.g. `gearvault`; pick a region near you; save the DB password somewhere safe).

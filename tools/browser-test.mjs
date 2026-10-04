@@ -42,9 +42,12 @@ trailer<</Root 1 0 R>>
 %%EOF`);
 await gen.close();
 
+const PLACEHOLDER_CONFIG = "export const SUPABASE_URL='https://YOUR-PROJECT-REF.supabase.co'; export const SUPABASE_ANON_KEY='YOUR-ANON-OR-PUBLISHABLE-KEY'; export const ALLOW_SIGNUP=false; export const STORAGE_BUCKET='gear-files';";
 async function newCtx(viewport, { fake = true, opts = {}, ctxOpts = {}, url = URL } = {}) {
   const ctx = await browser.newContext({ viewport, deviceScaleFactor: 2, acceptDownloads: true, ...ctxOpts });
   if (fake) { await ctx.addInitScript(o => { window.__FAKE_SB_OPTS = o; }, opts); await ctx.addInitScript({ path: FAKE }); }
+  else await ctx.route('**/js/config.js', r => r.fulfill({ contentType: 'text/javascript', body: PLACEHOLDER_CONFIG })); // simulate an unfilled config
+  await ctx.route(/supabase\.(co|in)\//, r => r.abort()); // tests must never talk to a real project
   const page = await ctx.newPage(); const errs = [];
   page.on('pageerror', e => errs.push(e.message)); page.on('console', m => m.type() === 'error' && !/Failed to load resource/.test(m.text()) && errs.push(m.text()));
   await page.goto(url); await page.waitForTimeout(250);
