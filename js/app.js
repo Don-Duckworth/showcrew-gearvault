@@ -7,6 +7,8 @@ import * as Cache from './cache.js';
 import * as Auth from './auth.js';
 import { createCloud } from './cloud.js';
 import * as CFG from './config.js';
+import * as Emx from './emx.js';
+import * as Scan from './scan.js';
 
 const APP_VERSION = '2.0.0';
 const $ = (sel, el = document) => el.querySelector(sel);
@@ -58,6 +60,8 @@ const fmtW = (kg, unit) => (kg == null ? '—' : `${C.fromKg(kg, unit).toLocaleS
 const plural = (n, w) => `${n} ${w}${n === 1 ? '' : 's'}`;
 const fmtSize = b => (b > 1048576 ? (b / 1048576).toFixed(1) + ' MB' : Math.max(1, Math.round(b / 1024)) + ' KB');
 const today = () => new Date().toISOString().slice(0, 10);
+const SCAN_ICON = '<svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 7V4h3M18 4h3v3M21 17v3h-3M6 20H3v-3" fill="none" stroke="currentColor" stroke-width="2"/><path d="M7 8v8M10 8v8M12.5 8v8M15 8v8M17 8v8" stroke="currentColor" stroke-width="1.6"/></svg>';
+const EMX_GLYPH = '<svg class="ico" viewBox="0 0 16 16" aria-hidden="true"><path d="M2 3v10M4.5 3v10M6.5 3v10M9 3v10M11 3v10M14 3v10" stroke="currentColor" stroke-width="1.3"/></svg>';
 const catAbbr = c => (c || '?').replace(/[^A-Za-z ]/g, ' ').split(/\s+/).filter(Boolean).slice(0, 2).map(w => w[0]).join('').toUpperCase();
 const itemTitle = i => i.name || [i.make, i.model].filter(Boolean).join(' ') || 'Untitled item';
 const kitsOf = id => S.kits.filter(k => k.itemIds.includes(id));
@@ -192,11 +196,11 @@ function gearViewHTML() {
   const opt = (v, l, cur) => `<option value="${esc(v)}" ${v === cur ? 'selected' : ''}>${esc(l)}</option>`;
   return `<div class="pane-h"><h2>Gear inventory</h2><div class="row"><button class="btn sm ghost" data-act="exportInvCSV">⤓ CSV</button><button class="btn sm primary" data-act="newItem">＋ Add gear</button></div></div>
   <div class="toolbar">
-    <div class="search"><input id="q" class="inp" type="search" placeholder="Search name, make, model, serial, vendor, tag…" value="${esc(ui.q)}" autocomplete="off" aria-label="Search"></div>
+    <div class="search has-scan"><input id="q" class="inp" type="search" placeholder="Search name, serial, Electromaxx #, tag…" value="${esc(ui.q)}" autocomplete="off" aria-label="Search"><button class="scanbtn" data-act="scanSearch" aria-label="Scan an Electromaxx sticker" title="Scan an Electromaxx sticker">${SCAN_ICON}</button></div>
     <select class="inp" data-filter="fCat" aria-label="Category">${opt('', 'All categories', ui.fCat)}${cats.map(c => opt(c, c, ui.fCat)).join('')}</select>
-    <select class="inp" data-filter="fStatus" aria-label="Status">${opt('', 'Any status', ui.fStatus)}${opt('service', 'In service (active + repair)', ui.fStatus)}${Store.STATUSES.map(([k, l]) => opt(k, l, ui.fStatus)).join('')}</select>
+    <select class="inp" data-filter="fStatus" aria-label="Status">${opt('', 'Any status', ui.fStatus)}${opt('service', 'In service (active + repair)', ui.fStatus)}${Store.STATUSES.map(([k, l]) => opt(k, l, ui.fStatus)).join('')}<optgroup label="Electromaxx #">${opt('emx:has', 'Has Electromaxx #', ui.fStatus)}${opt('emx:none', 'No Electromaxx # yet', ui.fStatus)}</optgroup></select>
     <select class="inp" data-filter="fTag" aria-label="Tag">${opt('', tags.length ? 'All tags' : 'No tags yet', ui.fTag)}${tags.map(t => opt(t, '#' + t, ui.fTag)).join('')}</select>
-    <select class="inp" data-filter="sort" aria-label="Sort">${[['name', 'Sort: Name A–Z'], ['category', 'Sort: Category'], ['value', 'Sort: Value ↓'], ['date', 'Sort: Purchased ↓'], ['updated', 'Sort: Recently edited'], ['missing', 'Sort: Missing carnet data']].map(([k, l]) => opt(k, l, ui.sort)).join('')}</select>
+    <select class="inp" data-filter="sort" aria-label="Sort">${[['name', 'Sort: Name A–Z'], ['category', 'Sort: Category'], ['value', 'Sort: Value ↓'], ['date', 'Sort: Purchased ↓'], ['emx', 'Sort: Electromaxx #'], ['updated', 'Sort: Recently edited'], ['missing', 'Sort: Missing carnet data']].map(([k, l]) => opt(k, l, ui.sort)).join('')}</select>
   </div>
   <div id="gearList" class="list"></div>`;
 }
@@ -204,14 +208,14 @@ function filteredItems() {
   const toks = ui.q.toLowerCase().split(/\s+/).filter(Boolean);
   let list = S.items.filter(i => {
     if (ui.fCat && i.category !== ui.fCat) return false;
-    if (ui.fStatus === 'service' ? !inService(i) : ui.fStatus && i.status !== ui.fStatus) return false;
+    if (ui.fStatus === 'emx:has' ? !i.emx : ui.fStatus === 'emx:none' ? !!i.emx : ui.fStatus === 'service' ? !inService(i) : ui.fStatus && i.status !== ui.fStatus) return false;
     if (ui.fTag && !i.tags.includes(ui.fTag)) return false;
-    if (toks.length) { const hay = [i.name, i.make, i.model, i.serial, i.vendor, i.notes, i.category, i.origin, ...i.tags, ...kitsOf(i.id).map(k => k.name)].join(' ').toLowerCase(); if (!toks.every(t => hay.includes(t))) return false; }
+    if (toks.length) { const hay = [i.name, i.make, i.model, i.serial, i.emx, i.emx && 'emx' + i.emx, i.vendor, i.notes, i.category, i.origin, ...i.tags, ...kitsOf(i.id).map(k => k.name)].join(' ').toLowerCase(); if (!toks.every(t => hay.includes(t))) return false; }
     return true;
   });
   const val = i => (C.unitValue(i) || 0) * (i.qty || 1), nm = i => itemTitle(i).toLowerCase();
   const cmp = { name: (a, b) => nm(a).localeCompare(nm(b)), category: (a, b) => a.category.localeCompare(b.category) || nm(a).localeCompare(nm(b)), value: (a, b) => val(b) - val(a),
-    date: (a, b) => (b.purchaseDate || '').localeCompare(a.purchaseDate || ''), updated: (a, b) => b.updated - a.updated, missing: (a, b) => carnetErrs(b).length - carnetErrs(a).length || nm(a).localeCompare(nm(b)) }[ui.sort];
+    date: (a, b) => (b.purchaseDate || '').localeCompare(a.purchaseDate || ''), emx: (a, b) => (!a.emx - !b.emx) || (a.emx || '').localeCompare(b.emx || '') || nm(a).localeCompare(nm(b)), updated: (a, b) => b.updated - a.updated, missing: (a, b) => carnetErrs(b).length - carnetErrs(a).length || nm(a).localeCompare(nm(b)) }[ui.sort];
   return list.sort(cmp);
 }
 function gearRowHTML(i) {
@@ -222,7 +226,7 @@ function gearRowHTML(i) {
     <div class="thumb">${img ? `<img data-thumb="${img.id}" alt="">` : esc(catAbbr(i.category))}</div>
     <div style="min-width:0"><div class="g-name">${esc(itemTitle(i))}</div>
       <div class="g-mm">${esc([i.make, i.model].filter(Boolean).join(' ') || i.category)}</div>
-      <div class="g-sn ${i.serial ? '' : 'none'}">${i.serial ? 'S/N ' + esc(i.serial) : 'no serial'}</div>
+      <div class="g-ids">${i.emx ? `<span class="emxtag" title="Electromaxx #">${EMX_GLYPH}${esc(i.emx)}</span>` : ''}<span class="g-sn ${i.serial ? '' : 'none'}">${i.serial ? 'S/N ' + esc(i.serial) : 'no serial'}</span></div>
       ${flags ? `<div class="g-flags">${flags}</div>` : ''}</div>
     <div class="g-meta"><div>${esc(i.category)}</div><div class="row">${kits.map(k => `<span class="tag kit">▣ ${esc(k.name)}</span>`).join('')}${i.tags.map(t => `<span class="tag">#${esc(t)}</span>`).join('')}</div>${i.origin ? `<div>Origin: ${esc(i.origin)}</div>` : ''}</div>
     <div class="g-val">${v == null ? '<span style="color:var(--amber)">—</span>' : money(v * (i.qty || 1), i.currency)}<small>${i.qty > 1 ? `${i.qty} × ${money(v, i.currency)}` : i.currentValue != null ? 'current value' : v != null ? 'purchase' : 'no value'}</small></div>
@@ -251,6 +255,7 @@ function openItemEditor(item, isNew = false) {
       <label class="fld span2"><span>Category</span><select class="inp" data-f="category">${cats.map(c => `<option ${c === d.category ? 'selected' : ''}>${esc(c)}</option>`).join('')}</select></label>
       ${f('make', 'Make', 'placeholder="Apple, Dell, Shure…" list="dl-makes" autocomplete="off"')}
       ${f('model', 'Model', 'placeholder="MacBook Pro 16&quot;" autocomplete="off"')}
+      <div class="fld span2 emxfld"><span>Electromaxx # <small>(sticker)</small></span><div class="joined"><input class="inp emx" data-f="emx" value="${esc(d.emx || '')}" inputmode="numeric" pattern="[0-9]*" maxlength="6" placeholder="6 digits" autocomplete="off" aria-label="Electromaxx number"><button class="btn scan" type="button" data-act="scanEmx" aria-label="Scan Electromaxx sticker">${SCAN_ICON} Scan</button></div><small class="emxhint" id="emxHint"></small></div>
       ${f('serial', 'Serial number(s) <b>● carnet</b>', 'placeholder="Separate several with commas" autocomplete="off" autocapitalize="characters"', 'span2 ' + need('serial'))}
       ${f('qty', 'Quantity / pieces', 'type="number" inputmode="numeric" min="1" step="1"')}
       <label class="fld"><span>Status</span><select class="inp" data-f="status">${Store.STATUSES.map(([k, l]) => `<option value="${k}" ${k === d.status ? 'selected' : ''}>${l}</option>`).join('')}</select></label>
@@ -278,14 +283,29 @@ function openItemEditor(item, isNew = false) {
     ${dataLists()}
     <div class="sheet-f">${isNew ? '' : '<button class="btn danger" data-act="deleteItem">Delete</button><button class="btn ghost" data-act="dupItem">Duplicate</button>'}<span class="grow"></span><button class="btn ghost" data-act="cancelEdit">Cancel</button><button class="btn primary" data-act="saveItem">Save</button></div>`,
   { cls: 'wide', backdrop: false, onClose: () => discardEdit() });
-  renderAtts();
-  if (isNew) $('[data-f=name]', o)?.focus({ preventScroll: true });
+  renderAtts(); emxHint();
+  if (isNew && !d.emx) $('[data-f=name]', o)?.focus({ preventScroll: true });
 }
 function dataLists() {
   const uniq = k => [...new Set(S.items.map(i => i[k]).filter(Boolean))].sort();
   return `<datalist id="dl-countries">${[...new Set([...uniq('origin'), ...Store.COUNTRIES])].map(c => `<option value="${esc(c)}">`).join('')}</datalist>
     <datalist id="dl-makes">${[...new Set([...uniq('make'), 'Apple', 'Dell', 'HP', 'Lenovo', 'Microsoft', 'ASUS', 'Blackmagic Design', 'Focusrite', 'RME', 'MOTU', 'Shure', 'Sennheiser', 'Behringer', 'Allen & Heath', 'Yamaha', 'Starlink', 'Ubiquiti', 'Netgear', 'CalDigit', 'OWC', 'Anker', 'Samsung', 'LG', 'Pelican', 'SKB', 'Gator'])].map(c => `<option value="${esc(c)}">`).join('')}</datalist>
     <datalist id="dl-vendors">${uniq('vendor').map(c => `<option value="${esc(c)}">`).join('')}</datalist>`;
+}
+/** Live validation for the Electromaxx # field: format + duplicates. Returns an error string or ''. */
+function emxProblem(d) {
+  const v = String(d.emx || '').trim(); if (!v) return '';
+  if (!Emx.isEmx(v)) return 'format';
+  return Emx.emxOwners(S.items, v, d.id).length ? 'dup' : '';
+}
+function emxHint() {
+  const el = $('#emxHint'); if (!el || !ui.edit) return;
+  const d = ui.edit.d, v = String(d.emx || '').trim(), p = emxProblem(d), fld = el.closest('.fld');
+  fld?.classList.toggle('bad', !!p);
+  if (!v) el.innerHTML = '';
+  else if (p === 'format') el.innerHTML = `<span class="warn">${v.length}/6 digits</span>`;
+  else if (p === 'dup') { const other = Emx.emxOwners(S.items, v, d.id)[0]; el.innerHTML = `<span class="warn">⚠ Already on “${esc(itemTitle(other))}”</span>`; }
+  else el.innerHTML = '<span class="okc">✓ unique</span>';
 }
 function renderAtts() {
   const box = $('#attsBox'); if (!box || !ui.edit) return;
@@ -308,6 +328,10 @@ function saveEdit() {
   if (readOnly()) return toast('Offline — reconnect to save');
   const d = E.d;
   if (!String(d.name || '').trim() && !String(d.make || '').trim() && !String(d.model || '').trim()) { toast('Give it a name (or make / model)'); $('[data-f=name]')?.focus(); return; }
+  d.emx = String(d.emx || '').trim();
+  const ep = emxProblem(d);
+  if (ep === 'format') { toast('Electromaxx # must be exactly 6 digits (or leave it empty)', 2600); $('[data-f=emx]')?.focus(); return; }
+  if (ep === 'dup') { const other = Emx.emxOwners(S.items, d.emx, d.id)[0]; toast(`Electromaxx # ${d.emx} is already on “${itemTitle(other)}”`, 3000); $('[data-f=emx]')?.focus(); return; }
   const item = Store.sanitizeItem({ ...d, tags: Store.splitTags(d.tagsText), updated: Date.now() }, S.settings);
   delete item.tagsText;
   const ix = S.items.findIndex(i => i.id === item.id);
@@ -389,6 +413,7 @@ function tripViewHTML() {
         <div class="grid2"><label class="fld"><span>Carnet currency</span><select class="inp" data-tf="currency">${[...new Set([t.currency, ...Store.CURRENCIES])].map(c => `<option ${c === t.currency ? 'selected' : ''}>${c}</option>`).join('')}</select></label>
         <label class="fld"><span>Weight unit</span><select class="inp" data-tf="weightUnit"><option value="kg" ${t.weightUnit === 'kg' ? 'selected' : ''}>kg</option><option value="lb" ${t.weightUnit === 'lb' ? 'selected' : ''}>lb</option></select></label></div>
         <label class="tgl"><input type="checkbox" data-tf="serialInDesc" ${t.serialInDesc ? 'checked' : ''}> Also put serial numbers in the description</label>
+        <label class="tgl"><input type="checkbox" data-tf="emxCol" ${t.emxCol ? 'checked' : ''}> Add an “Electromaxx #” column (internal asset tag) to the general list &amp; CSV</label>
       </div>
       <div class="card"><div class="row between"><div class="lbl">Kits on this trip</div><span class="hint">tap to toggle</span></div>
         <div class="chips">${S.kits.length ? S.kits.map(k => `<button class="chip ${t.kitIds.includes(k.id) ? 'on' : ''}" data-act="toggleTripKit" data-id="${k.id}">▣ ${esc(k.name)} <small>${k.itemIds.length}</small></button>`).join('') : '<span class="hint">No kits yet — make them in the Kits tab, or add items individually.</span>'}</div></div>
@@ -408,12 +433,12 @@ function tripLinesHTML() {
   ${gl.totals.errors ? `<p class="note amber" id="carnetIssues">⚠ <b>${plural(gl.totals.errors, 'line')} need attention before export:</b> ${esc(parts.join(', '))}. Tap <b>Fix</b> on a row to edit the item.</p>`
     : gl.totals.lines ? '<p class="note" id="carnetIssues">✓ Every line has a serial number, value and country of origin.</p>' : ''}
   <p class="hint">Value column = <b>current value</b> if set on the item, otherwise purchase price, × pieces, in ${esc(cur)}. Customs expects current fair market value.</p>
-  ${gl.lines.length ? `<div class="tablewrap"><table class="ro carnet"><thead><tr><th class="n">#</th><th>Trade description</th><th>Serial</th><th class="n">Pcs</th><th class="n">Wt ${gl.weightUnit}</th><th class="n">Value</th><th>Origin</th><th></th></tr></thead><tbody>
+  ${gl.lines.length ? `<div class="tablewrap"><table class="ro carnet"><thead><tr><th class="n">#</th><th>Trade description</th><th>Serial</th>${t.emxCol ? '<th>EMX #</th>' : ''}<th class="n">Pcs</th><th class="n">Wt ${gl.weightUnit}</th><th class="n">Value</th><th>Origin</th><th></th></tr></thead><tbody>
     ${gl.lines.map(l => { const errs = l.issues.filter(x => x.level === 'err'); return `<tr class="${errs.length ? 'bad' : ''}">
       <td class="n no">${l.no}</td><td class="desc">${esc(l.description)}${l.kit ? `<div class="kitname">▣ ${esc(l.kit)}</div>` : ''}${l.issues.length ? `<div class="issues">${l.issues.map(x => `<span class="flag ${x.level === 'err' ? '' : 'warn'}">${esc(issueLabel(x))}</span>`).join('')}</div>` : ''}</td>
-      <td class="mono" data-l="S/N">${esc(l.serial) || '—'}</td><td class="n" data-l="Pcs">${l.pieces}</td><td class="n" data-l="${gl.weightUnit}">${num2(l.weight)}</td><td class="n" data-l="${esc(cur)}">${l.value == null ? '—' : num2(l.value)}${l.currency !== cur ? ` <small>${esc(l.currency)}</small>` : ''}</td><td data-l="Origin">${esc(l.origin) || '—'}</td>
+      <td class="mono" data-l="S/N">${esc(l.serial) || '—'}</td>${t.emxCol ? `<td class="mono emxc" data-l="EMX #">${esc(l.emx) || '—'}</td>` : ''}<td class="n" data-l="Pcs">${l.pieces}</td><td class="n" data-l="${gl.weightUnit}">${num2(l.weight)}</td><td class="n" data-l="${esc(cur)}">${l.value == null ? '—' : num2(l.value)}${l.currency !== cur ? ` <small>${esc(l.currency)}</small>` : ''}</td><td data-l="Origin">${esc(l.origin) || '—'}</td>
       <td class="act" style="white-space:nowrap">${errs.length ? `<button class="btn sm" data-act="editItem" data-id="${l.itemId}">Fix</button>` : `<button class="iconbtn" data-act="editItem" data-id="${l.itemId}" aria-label="Edit">✎</button>`}<button class="iconbtn" data-act="excludeLine" data-id="${l.itemId}" aria-label="Leave off this trip" title="Leave off this trip">✕</button></td></tr>`; }).join('')}
-    </tbody><tfoot><tr><td class="no"></td><td class="desc">TOTAL</td><td class="mono"></td><td class="n" data-l="Pcs">${gl.totals.pieces}</td><td class="n" data-l="${gl.weightUnit}">${num2(gl.totals.weight)}</td><td class="n" data-l="${esc(cur)}">${num2(gl.totals.value)}</td><td colspan="2" class="hide-m">${esc(cur)}</td></tr></tfoot></table></div>`
+    </tbody><tfoot><tr><td class="no"></td><td class="desc">TOTAL</td><td class="mono"></td>${t.emxCol ? '<td class="mono hide-m"></td>' : ''}<td class="n" data-l="Pcs">${gl.totals.pieces}</td><td class="n" data-l="${gl.weightUnit}">${num2(gl.totals.weight)}</td><td class="n" data-l="${esc(cur)}">${num2(gl.totals.value)}</td><td colspan="2" class="hide-m">${esc(cur)}</td></tr></tfoot></table></div>`
     : '<div class="empty" style="padding:24px"><p>Pick kits or add individual items to build the general list.</p></div>'}
   ${excl.length ? `<div class="card"><div class="lbl">Left off this trip</div><div class="chips">${excl.map(i => `<button class="chip" data-act="restoreLine" data-id="${i.id}">↺ ${esc(itemTitle(i))}</button>`).join('')}</div></div>` : ''}`;
 }
@@ -428,9 +453,9 @@ function paperHTML(t) {
       <div class="sm" style="text-align:right">Carnet No.: <b>${esc(t.carnetNo) || '____________________'}</b><br>Holder: <b>${esc(t.holder) || '____________________'}</b></div></div>
     <div class="meta"><div><b>Trip / event</b>${esc(t.name)}</div><div><b>Destination country(ies)</b>${esc(t.destinations) || '—'}</div><div><b>Dates of travel</b>${esc([t.depart, t.ret].filter(Boolean).join(' to ')) || '—'}</div>
       <div><b>Currency of values</b>${esc(cur)} — current fair market value</div><div><b>Weight unit</b>${gl.weightUnit === 'lb' ? 'pounds (lb)' : 'kilograms (kg)'}</div><div><b>Total</b>${gl.totals.lines} lines · ${gl.totals.pieces} pieces</div></div>
-    <table><thead><tr><th class="c" style="width:5%">Item No.</th><th style="width:37%">Trade description of goods (make, model, description)</th><th style="width:17%">Serial number</th><th class="c" style="width:7%">No. of pieces</th><th class="n" style="width:9%">Weight (${gl.weightUnit})</th><th class="n" style="width:12%">Value (${esc(cur)})</th><th style="width:13%">Country of origin</th></tr></thead>
-    <tbody>${gl.lines.map(l => { const m = k => (l.issues.some(x => x.k === k && x.level === 'err') ? ' miss' : ''); return `<tr><td class="c">${l.no}</td><td>${esc(l.description)}</td><td class="sn${m('serial')}">${esc(l.serial) || '—'}</td><td class="c">${l.pieces}</td><td class="n">${l.weight == null ? '—' : num2(l.weight)}</td><td class="n${m('value')}${m('currency')}">${l.value == null ? '—' : num2(l.value)}${l.currency !== cur ? ' ' + esc(l.currency) : ''}</td><td class="${m('origin').trim()}">${esc(l.origin) || '—'}</td></tr>`; }).join('')}</tbody>
-    <tfoot><tr><td></td><td>GRAND TOTAL</td><td></td><td class="c">${gl.totals.pieces}</td><td class="n">${num2(gl.totals.weight)}</td><td class="n">${num2(gl.totals.value)}</td><td>${esc(cur)}</td></tr></tfoot></table>
+    <table><thead><tr><th class="c" style="width:5%">Item No.</th><th style="width:${t.emxCol ? 30 : 37}%">Trade description of goods (make, model, description)</th><th style="width:${t.emxCol ? 15 : 17}%">Serial number</th>${t.emxCol ? '<th style="width:9%">Electromaxx #</th>' : ''}<th class="c" style="width:7%">No. of pieces</th><th class="n" style="width:9%">Weight (${gl.weightUnit})</th><th class="n" style="width:12%">Value (${esc(cur)})</th><th style="width:13%">Country of origin</th></tr></thead>
+    <tbody>${gl.lines.map(l => { const m = k => (l.issues.some(x => x.k === k && x.level === 'err') ? ' miss' : ''); return `<tr><td class="c">${l.no}</td><td>${esc(l.description)}</td><td class="sn${m('serial')}">${esc(l.serial) || '—'}</td>${t.emxCol ? `<td class="sn">${esc(l.emx) || '—'}</td>` : ''}<td class="c">${l.pieces}</td><td class="n">${l.weight == null ? '—' : num2(l.weight)}</td><td class="n${m('value')}${m('currency')}">${l.value == null ? '—' : num2(l.value)}${l.currency !== cur ? ' ' + esc(l.currency) : ''}</td><td class="${m('origin').trim()}">${esc(l.origin) || '—'}</td></tr>`; }).join('')}</tbody>
+    <tfoot><tr><td></td><td>GRAND TOTAL</td><td></td>${t.emxCol ? '<td></td>' : ''}<td class="c">${gl.totals.pieces}</td><td class="n">${num2(gl.totals.weight)}</td><td class="n">${num2(gl.totals.value)}</td><td>${esc(cur)}</td></tr></tfoot></table>
     <div class="foot"><div>Values stated are current fair market values in ${esc(cur)}. Serial numbers are as marked on the goods. All goods are professional equipment for use by the holder and will be re-exported.<br>Prepared ${esc(today())} with ShowCrew GearVault.</div><div class="sig">Holder / authorized representative — signature &amp; date</div></div>
   </div>`;
 }
@@ -477,7 +502,7 @@ function dataViewHTML() {
       <p class="hint">${plural(S.items.length, 'item')} · ${plural(S.kits.length, 'kit')} · ${plural(S.trips.length, 'trip')} · ${plural(nAtt, 'file')}</p>
       <div class="row wrap"><button class="btn primary" data-act="exportBackup">⤓ Export backup</button><label class="btn">⤒ Restore backup<input type="file" accept=".json,application/json" data-import="backup"></label></div></div>
     <div class="card"><div class="lbl">Inventory spreadsheet (CSV)</div>
-      <p class="hint">Opens in Excel / Numbers / Google Sheets. Import matches rows by <b>id</b> (updates) or adds new items. Recognized headers include name, category, make, model, serial, qty, purchase_price, current_value, currency, vendor, country_of_origin, weight, weight_unit, status, tags, notes.</p>
+      <p class="hint">Opens in Excel / Numbers / Google Sheets. Import matches rows by <b>id</b> (updates) or adds new items. Recognized headers include name, category, make, model, serial, Electromaxx # (also “asset tag”, “EMX”), qty, purchase_price, current_value, currency, vendor, country_of_origin, weight, weight_unit, status, tags, notes.</p>
       <div class="row wrap"><button class="btn" data-act="exportInvCSV">⤓ Export CSV</button><label class="btn">⤒ Import CSV<input type="file" accept=".csv,text/csv" data-import="csv"></label><button class="btn ghost" data-act="csvTemplate">Template</button></div></div>
     <div class="card"><div class="lbl">Defaults</div><div class="grid2">
       <label class="fld"><span>Currency</span><select class="inp" data-set="currency">${[...new Set([st.currency, ...Store.CURRENCIES])].map(c => `<option ${c === st.currency ? 'selected' : ''}>${c}</option>`).join('')}</select></label>
@@ -544,6 +569,8 @@ async function bringIn(st, getBlob, mode = 'merge') {
     const up = (arr, x) => { const ix = arr.findIndex(y => y.id === x.id); if (ix >= 0) arr[ix] = x; else arr.push(x); };
     st.items.forEach(x => up(S.items, x)); st.kits.forEach(x => up(S.kits, x)); st.trips.forEach(x => up(S.trips, x));
     S.settings.categories = [...new Set([...S.settings.categories, ...st.settings.categories])];
+    const dups = Emx.dedupeEmx(S.items); // cloud allows each Electromaxx # once
+    if (dups.length) setTimeout(() => toast(`${dups.length} duplicate Electromaxx # cleared: ${dups.map(d => d.emx).join(', ')}`, 4500), 2700);
   }
   ui.tripId = null; render();
   clearTimeout(syncT); await runSync();
@@ -552,15 +579,18 @@ async function bringIn(st, getBlob, mode = 'merge') {
 async function importCSV(file) {
   if (readOnly()) return toast('Offline — connect to import');
   let rows; try { rows = C.parseInventoryCSV(await file.text()); } catch (e) { return toast('CSV import failed: ' + e.message, 3000); }
-  let added = 0, updated = 0;
+  let added = 0, updated = 0, badEmx = 0;
   for (const o of rows) {
+    if (o.emxRaw && !o.emx) badEmx++; delete o.emxRaw;
     if (o.weightUnit) o.weightUnit = /^lb/i.test(o.weightUnit) ? 'lb' : 'kg';
     const ex = o.id && S.items.find(i => i.id === o.id);
     if (ex) { const clean = Object.fromEntries(Object.entries(o).filter(([, v]) => v !== '')); Object.assign(ex, Store.sanitizeItem({ ...ex, ...clean, atts: ex.atts, updated: Date.now() }, S.settings)); updated++; }
     else { const it = Store.sanitizeItem({ ...o, id: o.id && M.UUID_RE.test(o.id) ? o.id : undefined, category: o.category || 'Other' }, S.settings); if (S.items.some(i => i.id === it.id)) it.id = Store.uid('itm'); S.items.push(it); added++; }
   }
   for (const i of S.items) if (!S.settings.categories.includes(i.category)) S.settings.categories.push(i.category);
-  persist(); render(); toast(`CSV: ${added} added, ${updated} updated`, 2400);
+  const dups = Emx.dedupeEmx(S.items);
+  persist(); render();
+  toast(`CSV: ${added} added, ${updated} updated${badEmx ? ` · ${badEmx} invalid Electromaxx # skipped` : ''}${dups.length ? ` · ${dups.length} duplicate Electromaxx # cleared (${dups.map(d => d.emx).join(', ')})` : ''}`, dups.length || badEmx ? 4500 : 2400);
 }
 
 // ---------- actions ----------
@@ -588,6 +618,18 @@ async function refreshFromCloud(force = false) {
   } catch (e) { console.warn('refresh failed', e); if (force) toast('Refresh failed: ' + (e.message || e)); return false; }
 }
 function clearLocalSession() { for (const k of Object.keys(localStorage)) if (/^sb-.*-auth-token/.test(k)) localStorage.removeItem(k); localStorage.removeItem(LAST_UID); }
+/** Scan a sticker from the gear list: jump to the item, or offer to add it. Works offline (read-only lookup). */
+async function scanToFind() {
+  const r = await Scan.scan({ title: 'FIND GEAR BY STICKER' }); if (!r) return;
+  const hits = S.items.filter(i => i.emx === r.emx);
+  ui.view = 'gear'; ui.tripId = null; Object.assign(ui, { q: r.emx, fCat: '', fStatus: '', fTag: '' }); render();
+  if (hits.length === 1) { openItemEditor(hits[0]); toast(`Electromaxx # ${r.emx} → ${itemTitle(hits[0])}`, 2200); return; }
+  if (readOnly()) return toast(`No gear with Electromaxx # ${r.emx}`, 2600);
+  const ch = await choose(`No gear with Electromaxx # ${r.emx}`, `<p class="hint">Nothing in your inventory has this sticker number yet.</p>`,
+    [['new', `＋ Add new gear with # ${esc(r.emx)}`, 'primary'], ['assign', 'Put it on existing gear…']]);
+  if (ch === 'new') { const it = Store.makeItem(S.settings); it.emx = r.emx; openItemEditor(it, true); $('[data-f=name]')?.focus({ preventScroll: true }); }
+  else if (ch === 'assign') { Object.assign(ui, { q: '', fStatus: 'emx:none' }); render(); toast(`Tap the item, then enter ${r.emx} (or Scan) in its Electromaxx # field`, 3500); ui.pendingEmx = r.emx; }
+}
 // Actions that change data — blocked while offline / read-only.
 const MUTATING = new Set(['newItem', 'saveItem', 'dupItem', 'deleteItem', 'removeAtt', 'newKit', 'saveKit', 'deleteKit', 'newTrip', 'deleteTrip', 'toggleTripKit',
   'pickTripItems', 'saveTripItems', 'removeTripItem', 'excludeLine', 'restoreLine', 'addCategory', 'delCategory', 'eraseAll', 'uploadLegacy']);
@@ -606,10 +648,14 @@ const ACTIONS = {
     localStorage.removeItem(Store.LEGACY_KEY); localStorage.removeItem(Store.LEGACY_UPLOADED_KEY); await Files.clear().catch(() => {}); render(); toast('On-device copy deleted');
   },
   newItem: el => { const it = Store.makeItem(S.settings); if (el?.dataset.cat) it.category = el.dataset.cat; openItemEditor(it, true); },
-  editItem: el => { const it = S.items.find(i => i.id === el.dataset.id); if (it) openItemEditor(it); },
+  editItem: el => {
+    const it = S.items.find(i => i.id === el.dataset.id); if (!it) return;
+    const pe = ui.pendingEmx; ui.pendingEmx = null; openItemEditor(it);
+    if (pe && !it.emx && ui.edit && !readOnly()) { ui.edit.d.emx = pe; const inp = $('[data-f=emx]'); if (inp) inp.value = pe; emxHint(); toast(`Electromaxx # ${pe} filled in — Save to keep it`, 2600); }
+  },
   cancelEdit: () => closeLayer(),
   saveItem: () => saveEdit(),
-  dupItem: () => { const src = ui.edit.d; closeLayer(); const it = Store.sanitizeItem({ ...src, tags: Store.splitTags(src.tagsText), id: Store.uid('itm'), serial: '', atts: [], name: (src.name || '') + ' (copy)', created: Date.now() }, S.settings); openItemEditor(it, true); toast('Copy — enter its serial number'); },
+  dupItem: () => { const src = ui.edit.d; closeLayer(); const it = Store.sanitizeItem({ ...src, tags: Store.splitTags(src.tagsText), id: Store.uid('itm'), serial: '', emx: '', atts: [], name: (src.name || '') + ' (copy)', created: Date.now() }, S.settings); openItemEditor(it, true); toast('Copy — enter its serial number and Electromaxx #'); },
   deleteItem: async () => {
     const d = ui.edit.d; if (!(await confirmBox(`Delete “${itemTitle(d)}”?`, 'Delete', '<p class="hint">Its photos and receipts are deleted too. It is removed from kits and trips.</p>'))) return;
     const unsavedAtts = d.atts.concat(ui.edit.removed || []).filter(a => ui.edit.newAtts.includes(a.id));
@@ -622,6 +668,13 @@ const ACTIONS = {
   toggleEditKit: el => { const s = ui.edit.kits, id = el.dataset.id; s.has(id) ? s.delete(id) : s.add(id); el.classList.toggle('on', s.has(id)); },
   viewAtt: (el, e) => { if (e.target.closest('.x')) return; const a = ui.edit?.d.atts.find(x => x.id === el.dataset.id); if (a) viewAtt(a); },
   removeAtt: async el => { const E = ui.edit, a = E.d.atts.find(x => x.id === el.dataset.id); if (!a) return; if (!(await confirmBox(`Remove ${a.kind} “${a.name}”?`, 'Remove'))) return; E.d.atts = E.d.atts.filter(x => x !== a); E.pendingDel.push(a.id); (E.removed = E.removed || []).push(a); renderAtts(); },
+  scanSearch: () => scanToFind(),
+  scanEmx: async () => {
+    const r = await Scan.scan({ title: 'SCAN STICKER FOR THIS ITEM' }); if (!r || !ui.edit) return;
+    const inp = $('[data-f=emx]'); ui.edit.d.emx = r.emx; if (inp) inp.value = r.emx; emxHint();
+    const other = Emx.emxOwners(S.items, r.emx, ui.edit.d.id)[0];
+    toast(other ? `⚠ ${r.emx} is already on “${itemTitle(other)}”` : `Electromaxx # ${r.emx}`, 2600);
+  },
   clearFilters: () => { Object.assign(ui, { q: '', fCat: '', fStatus: '', fTag: '' }); render(); },
   exportInvCSV: () => { download(`GearVault_inventory_${today()}.csv`, new Blob([C.inventoryCSV(S.items)], { type: 'text/csv;charset=utf-8' })); toast(`Exported ${plural(S.items.length, 'item')}`); },
   csvTemplate: () => download('GearVault_inventory_template.csv', new Blob([C.toCSV([C.INV_COLS.map(c => c[0])])], { type: 'text/csv;charset=utf-8' })),
@@ -691,6 +744,7 @@ $('#nav').addEventListener('click', e => { const b = e.target.closest('[data-vie
 document.addEventListener('input', e => {
   const el = e.target;
   if (el.id === 'q') { ui.q = el.value; return renderGearList(); }
+  if (el.dataset.f === 'emx' && ui.edit) { const v = el.value.replace(/\D/g, '').slice(0, 6); if (v !== el.value) el.value = v; ui.edit.d.emx = v; return emxHint(); }
   if (el.dataset.f && ui.edit) { ui.edit.d[el.dataset.f] = el.value; const fl = el.closest('.fld'); if (fl && (el.dataset.f === 'serial' || el.dataset.f === 'origin')) fl.classList.toggle('need', !el.value.trim()); return; }
   if (el.hasAttribute('data-pickfilter')) { const q = el.value.toLowerCase().trim(); $$('.pick', el.closest('.modal-card')).forEach(p => { p.style.display = !q || p.dataset.s.includes(q) ? '' : 'none'; }); }
 });
@@ -770,5 +824,5 @@ document.addEventListener('visibilitychange', () => { if (document.visibilitySta
 window.addEventListener('beforeunload', e => { if (unsaved()) { e.preventDefault(); e.returnValue = ''; } });
 
 if ('serviceWorker' in navigator && location.protocol !== 'file:') navigator.serviceWorker.register('./sw.js').catch(e => console.warn('SW registration failed', e));
-window.__gv = { get S() { return S; }, ui, render, Files, C, Store, M, Cache, layers, get cloud() { return cloud; }, get user() { return user; }, runSync, refreshFromCloud, readOnly };
+window.__gv = { get S() { return S; }, ui, render, Files, C, Store, M, Cache, Scan, Emx, layers, get cloud() { return cloud; }, get user() { return user; }, runSync, refreshFromCloud, readOnly };
 boot();

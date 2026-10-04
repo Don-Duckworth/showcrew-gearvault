@@ -1,4 +1,5 @@
 // ShowCrew GearVault — persistence (localStorage for records; blobs live in IndexedDB, see files.js) + data model helpers.
+import { normEmx, dedupeEmx } from './emx.js';
 const KEY = 'showcrew.gearvault.v1'; // v1 on-device data (read only for the cloud upload offer)
 
 // v2: ids are UUIDs (Postgres uuid primary keys). The prefix argument is kept for call-site readability only.
@@ -22,7 +23,7 @@ export function emptyState() { return { v: 1, items: [], kits: [], trips: [], se
 
 export function makeItem(settings = defaultSettings()) {
   return {
-    id: uid('itm'), name: '', category: settings.categories[0] || 'Other', make: '', model: '', serial: '', qty: 1,
+    id: uid('itm'), name: '', category: settings.categories[0] || 'Other', make: '', model: '', serial: '', emx: '', qty: 1,
     purchaseDate: '', price: null, currency: settings.currency || 'USD', currentValue: null, vendor: '', origin: '',
     weight: null, weightUnit: settings.weightUnit || 'kg', notes: '', tags: [], status: 'active', atts: [],
     created: Date.now(), updated: Date.now(),
@@ -32,7 +33,7 @@ export function makeKit(name = 'New kit') { return { id: uid('kit'), name, type:
 export function makeTrip(settings = defaultSettings(), name = 'New trip') {
   return {
     id: uid('trp'), name, destinations: '', depart: '', ret: '', carnetNo: '', holder: settings.holder || '', purpose: 'Professional equipment',
-    currency: settings.currency || 'USD', weightUnit: settings.weightUnit || 'kg', serialInDesc: false,
+    currency: settings.currency || 'USD', weightUnit: settings.weightUnit || 'kg', serialInDesc: false, emxCol: false,
     kitIds: [], itemIds: [], excluded: [], notes: '', created: Date.now(), updated: Date.now(),
   };
 }
@@ -51,7 +52,7 @@ export function sanitizeItem(i, settings = defaultSettings()) {
   const st = STATUSES.some(([k]) => k === i.status) ? i.status : 'active';
   return {
     ...base, id: s(i.id, 60) || base.id, name: s(i.name, 200), category: s(i.category, 80) || base.category, make: s(i.make, 120), model: s(i.model, 120),
-    serial: s(i.serial, 400), qty: Math.max(1, Math.round(numOrNull(i.qty) || 1)), purchaseDate: /^\d{4}-\d{2}-\d{2}$/.test(i.purchaseDate || '') ? i.purchaseDate : '',
+    serial: s(i.serial, 400), emx: normEmx(i.emx), qty: Math.max(1, Math.round(numOrNull(i.qty) || 1)), purchaseDate: /^\d{4}-\d{2}-\d{2}$/.test(i.purchaseDate || '') ? i.purchaseDate : '',
     price: numOrNull(i.price), currency: (s(i.currency, 3) || base.currency).toUpperCase(), currentValue: numOrNull(i.currentValue),
     vendor: s(i.vendor, 120), origin: s(i.origin, 80), weight: numOrNull(i.weight), weightUnit: i.weightUnit === 'lb' ? 'lb' : 'kg',
     notes: s(i.notes, 4000), tags: splitTags(i.tags), status: st,
@@ -67,7 +68,8 @@ export function sanitizeState(d) {
   settings.currency = s(settings.currency, 3).toUpperCase() || 'USD'; settings.holder = s(settings.holder, 200);
   const items = d.items.map(i => sanitizeItem(i, settings));
   const kits = (d.kits || []).map(k => ({ ...makeKit(), ...k, id: s(k.id, 60) || uid('kit'), name: s(k.name, 120) || 'Kit', type: s(k.type, 40) || 'Kit', notes: s(k.notes, 4000), itemIds: ids(k.itemIds) }));
-  const trips = (d.trips || []).map(t => ({ ...makeTrip(settings), ...t, id: s(t.id, 60) || uid('trp'), name: s(t.name, 120) || 'Trip', kitIds: ids(t.kitIds), itemIds: ids(t.itemIds), excluded: ids(t.excluded), weightUnit: t.weightUnit === 'lb' ? 'lb' : 'kg', serialInDesc: !!t.serialInDesc }));
+  const trips = (d.trips || []).map(t => ({ ...makeTrip(settings), ...t, id: s(t.id, 60) || uid('trp'), name: s(t.name, 120) || 'Trip', kitIds: ids(t.kitIds), itemIds: ids(t.itemIds), excluded: ids(t.excluded), weightUnit: t.weightUnit === 'lb' ? 'lb' : 'kg', serialInDesc: !!t.serialInDesc, emxCol: !!t.emxCol }));
+  dedupeEmx(items); // the database allows each Electromaxx # once per owner
   return { v: 1, items, kits, trips, settings };
 }
 

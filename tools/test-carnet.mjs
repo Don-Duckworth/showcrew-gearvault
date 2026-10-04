@@ -2,6 +2,7 @@
 import * as C from '../js/carnet.js';
 import * as St from '../js/store.js';
 import * as M from '../js/cloudmap.js';
+import * as X from '../js/emx.js';
 let fail = 0; const ok = (c, m) => { console.log((c ? 'PASS ' : 'FAIL ') + m); if (!c) fail++; };
 const it = (o) => St.sanitizeItem(o);
 const a = it({ id: 'a', name: 'Show laptop A', make: 'Apple', model: 'MacBook Pro 16"', serial: 'X1', price: 3499, origin: 'China', weight: 2.14, weightUnit: 'kg' });
@@ -68,4 +69,37 @@ bk.items = bk.items.slice(1);
 const d2 = M.diff(snap, M.rowsFromState(bk, UID));
 ok(d2.del.items.length === 1 && d2.del.attachments.length === 1 && d2.del.attachments[0].path, 'deleting an item deletes its attachment rows (with storage path for cleanup)');
 ok(M.DELETE_ORDER.indexOf('attachments') < M.DELETE_ORDER.indexOf('items') && M.UPSERT_ORDER.indexOf('items') < M.UPSERT_ORDER.indexOf('kit_items'), 'parents upserted first, children deleted first');
+
+// ---------- v2.1 Electromaxx # ----------
+const sc = t => X.emxFromScan(t).emx;
+ok(sc('004217') === '004217' && sc(' 004217\r\n') === '004217', 'scan: plain 6 digits (whitespace/control chars trimmed)');
+ok(sc('EMX-004218') === '004218' && sc('https://electromaxx.example/gear/004221?x=1') === '004221' && sc('GV|004217') === '004217', 'scan: 6-digit run inside Code 39 / QR URL text');
+ok(sc('0000000042208') === '004220', 'scan: EAN-13 with valid check digit → check digit + leading zeros stripped');
+ok(sc('004219') === '004219' && sc('00004219') === '004219', 'scan: ITF / zero-padded all-digit codes');
+ok(sc('1234567') === null && sc('123456789012') === null && sc('SN-ABCDEFG') === null, 'scan: 7+ significant digits or no digits → no number');
+ok(sc('004217 / 004218') === null && X.emxFromScan('004217 / 004218').candidates.join() === '004217,004218', 'scan: two different numbers → ambiguous, both offered');
+ok(X.gs1Valid('4006381333931') && !X.gs1Valid('4006381333932') && X.gs1Valid('036000291452'), 'GS1 check digit (EAN-13, UPC-A)');
+ok(X.looseEmx('4217') === '004217' && X.looseEmx('4217.0') === '004217' && X.looseEmx('#004217') === '004217' && X.looseEmx('1234567') === '' && X.looseEmx('AB12') === '', 'spreadsheet number restores leading zeros');
+ok(X.normEmx('004217') === '004217' && X.normEmx('4217') === '' && X.normEmx(null) === '', 'stored number must be exactly 6 digits');
+const SE = St.sanitizeState({ items: [{ id: 'a', emx: '004217' }, { id: 'b', emx: '004217' }, { id: 'c', emx: '12' }, { id: 'd' }] });
+ok(SE.items.map(i => i.emx).join() === '004217,,,', 'sanitize: invalid dropped, duplicate cleared (first keeps it)');
+ok(X.emxOwners(SE.items, '004217', 'b').length === 1 && X.emxOwners(SE.items, '004217', 'a').length === 0, 'duplicate lookup excludes the item itself');
+const S3 = St.sanitizeState({ items: [{ id: 'x1', name: 'Laptop', serial: 'C02', emx: '004217', price: 10, origin: 'China' }, { id: 'x2', name: 'Cable', serial: 'N/A', price: 5, origin: 'China' }], trips: [{ id: 't1', name: 'T', itemIds: ['x1', 'x2'], emxCol: true }] });
+await M.remapIds(S3, UID);
+const R3 = M.rowsFromState(S3, UID);
+const r1 = [...R3.items.values()].find(r => r.name === 'Laptop'), r2 = [...R3.items.values()].find(r => r.name === 'Cable');
+ok(r1.electromaxx_no === '004217' && r2.electromaxx_no === null && [...R3.trips.values()][0].show_emx === true, 'cloud rows: electromaxx_no (NULL when empty), trips.show_emx');
+const B3 = M.stateFromRows(Object.fromEntries(M.TABLES.map(t => [t, [...R3[t].values()]])));
+ok(B3.items.find(i => i.name === 'Laptop').emx === '004217' && B3.items.find(i => i.name === 'Cable').emx === '' && B3.trips[0].emxCol === true, 'rows → state round-trip keeps Electromaxx # + column toggle');
+const gl3 = C.buildGeneralList(B3, B3.trips[0]);
+const g3 = C.generalListCSV(gl3, B3.trips[0]);
+ok(/Serial number,Electromaxx #,Number of pieces/.test(g3) && /,C02,004217,1,/.test(g3) && /,N\/A,,1,/.test(g3), 'general list CSV: optional Electromaxx # column');
+ok(!C.generalListCSV(gl3, { ...B3.trips[0], emxCol: false }).includes('Electromaxx'), 'general list CSV: column absent when toggle off (default)');
+const inv3 = C.inventoryCSV(B3.items);
+ok(inv3.split('\r\n')[0].split(',').includes('Electromaxx #') && inv3.includes(',004217,'), 'inventory CSV exports “Electromaxx #”');
+const back3 = C.parseInventoryCSV(inv3);
+ok(back3.find(o => o.name === 'Laptop').emx === '004217', 'inventory CSV re-import reads its own column');
+for (const h of ['Electromaxx #', 'electromaxx no', 'Electromaxx  Number', 'EMX', 'Asset Tag', 'electromaxx_no']) {
+  const o = C.parseInventoryCSV(`Name,${h}\nThing,4217\n`)[0]; ok(o.emx === '004217', `CSV alias “${h}”`);
+}
 console.log(fail ? `${fail} FAILED` : 'ALL PASS'); process.exit(fail ? 1 : 0);

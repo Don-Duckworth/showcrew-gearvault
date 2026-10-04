@@ -10,4 +10,8 @@ $PSQL -d postgres -c "drop database if exists $DB" -c "create database $DB"
 $PSQL -d "$DB" -f supabase/tests/local-stub.sql
 $PSQL -d "$DB" -f supabase/migrations/0001_init.sql
 $PSQL -d "$DB" -f supabase/migrations/0001_init.sql   # second run must succeed too
+$PSQL -d "$DB" -f supabase/migrations/0002_electromaxx.sql
+$PSQL -d "$DB" -f supabase/migrations/0002_electromaxx.sql
 $PSQL -d "$DB" -f supabase/tests/rls-test.sql
+$PSQL -d "$DB" -c "delete from auth.users"   # fresh users for the next file
+$PSQL -d "$DB" -f supabase/tests/electromaxx-test.sql

@@ -1,11 +1,11 @@
 // ShowCrew GearVault service worker — offline app shell. Bump VERSION whenever files change.
 // Supabase (auth / database / storage) is NEVER cached: those requests are cross-origin and pass straight through,
 // and same-origin /auth|rest|storage|realtime/v1 paths are explicitly bypassed too.
-const VERSION = 'scgv-v2.0.0';
+const VERSION = 'scgv-v2.1.0';
 const ASSETS = [
   './', './index.html', './manifest.webmanifest', './css/app.css',
   './js/app.js', './js/store.js', './js/files.js', './js/carnet.js', './js/cloud.js', './js/cloudmap.js', './js/cache.js', './js/auth.js', './js/config.js',
-  './js/vendor/supabase.js',
+  './js/vendor/supabase.js', './js/emx.js', './js/scan.js', './js/vendor/zxing.min.js',
   './icons/icon-192.png', './icons/icon-512.png', './icons/icon-maskable-512.png', './icons/apple-touch-icon.png', './icons/favicon-32.png',
 ];
 const NETWORK_FIRST = /\/js\/config\.js$/; // so filling in config.js takes effect on the next load

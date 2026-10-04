@@ -1,4 +1,4 @@
-# ShowCrew GearVault — ShowCrew Tools (v2 · Supabase cloud)
+# ShowCrew GearVault — ShowCrew Tools (v2.1 · Supabase cloud)
 
 Track computer / show gear (Millumin, PowerPoint & Keynote rigs, rack PCs, audio, network, cables, cases) with photos and receipts,
 group it into kits / road cases, and build the **ATA Carnet General List** for travel abroad.
@@ -12,7 +12,7 @@ Live: https://don-duckworth.github.io/showcrew-gearvault/ (GitHub Pages, `main` 
 ## Status of Don's project
 
 Project **ShowCrew GearVault** (ref `ggtkglxvuxvmuqtpvlgs`, us-east-2). Steps 1, 2 and 7 below are **done**: the schema is applied
-(migrations `init_gearvault` + `init_gearvault_advisor_fixes`) and `js/config.js` holds the project URL and the `sb_publishable_…` key.
+(migrations `init_gearvault` + `init_gearvault_advisor_fixes`, and for v2.1 `electromaxx_no` + `electromaxx_trip_toggle` = `0002_electromaxx.sql`) and `js/config.js` holds the project URL and the `sb_publishable_…` key.
 Still to do in the dashboard (steps 3–6):
 
 - URL configuration (Site URL + Redirect URLs): https://supabase.com/dashboard/project/ggtkglxvuxvmuqtpvlgs/auth/url-configuration
@@ -27,6 +27,7 @@ Still to do in the dashboard (steps 3–6):
 2. **Create the tables, security rules and file bucket** — Dashboard → *SQL Editor* → *New query* → paste all of
    [`supabase/migrations/0001_init.sql`](supabase/migrations/0001_init.sql) → *Run*. It's safe to run again.
    It creates the tables, Row Level Security, and the private Storage bucket **`gear-files`** (no need to create the bucket by hand).
+   Then do the same with [`supabase/migrations/0002_electromaxx.sql`](supabase/migrations/0002_electromaxx.sql) (v2.1 Electromaxx gear number; also safe to re-run).
 3. **Point auth at the app** — *Authentication → URL Configuration*:
    - **Site URL**: `https://don-duckworth.github.io/showcrew-gearvault/`
    - **Redirect URLs**: add `https://don-duckworth.github.io/showcrew-gearvault/` (and `http://localhost:8766/` if you test locally).
@@ -78,6 +79,29 @@ which only matters for password resets. Free-plan projects pause after a week of
   *Restore backup* merges into or replaces your cloud data. v1 backup files restore fine. Inventory CSV export/import and the template still work.
 - **Gear / Kits / Trips / Carnet**: unchanged from v1 — fields, kits, trip picking with per-trip exclusions, flags for missing serial/value/origin,
   General List print/PDF (US Letter landscape) and Excel-friendly CSV.
+- **Electromaxx gear number (v2.1)** — the sticker with a barcode + 6-digit number.
+  - *Item editor*: **Electromaxx #** field next to the serial (numeric keypad), must be exactly 6 digits, warns live if another item already has it
+    and won't save a duplicate. **Scan** button fills it from the barcode. In the DB: `items.electromaxx_no` (text, `^[0-9]{6}$` check, unique per owner).
+    To swap numbers between two items, clear one first (two saves).
+  - *Gear list*: amber `#004217` tag on each row, included in search, sort **"Electromaxx #"**, filter **Has / No Electromaxx #**. The **scan button in
+    the search bar** jumps straight to the item; an unknown number offers *Add new gear with this #* or *Put it on existing gear…*.
+  - *Carnet*: per-trip toggle **"Electromaxx # column"** (off by default — it's an internal asset tag) adds the column to the on-screen list, print/PDF
+    and the General List CSV (`trips.show_emx`).
+  - *CSV*: inventory export has an **`Electromaxx #`** column; import also accepts `Electromaxx No`, `Electromaxx Number`, `electromaxx_no`, `EMX`,
+    `EMX #`, `Asset tag`, `Gear #`, `Barcode`… Excel drops leading zeros (`4217`) — import pads them back to `004217`. Invalid or duplicate numbers are
+    skipped (the item is still imported) and counted in the import message. JSON backup/restore and the v1 upload carry the field too.
+- **Barcode scanning** (`js/scan.js`, `js/emx.js`)
+  - Uses the browser's native **`BarcodeDetector`** where it exists (Chrome/Edge on Android, ChromeOS, macOS). Otherwise (iPhone/iPad Safari, Firefox,
+    desktop Chrome on Windows/Linux) it loads the vendored **ZXing** decoder (`js/vendor/zxing.min.js`, @zxing/library 0.23.0, Apache-2.0 — no CDN;
+    precached by the service worker, so it works offline).
+  - Formats: Code 128, Code 39, Code 93, Codabar, EAN-13/8, UPC-A/E, ITF, QR, Data Matrix. The 6-digit number is pulled out of whatever the code
+    holds (e.g. `EMX-004218`, a URL ending in `004221`, or an EAN/UPC like `0000000042208` → check digit dropped → `004220`). If a code holds several
+    different 6-digit numbers you pick one.
+  - Camera needs **HTTPS** (GitHub Pages is fine; `http://localhost` also works). Fallbacks in the same window: **Take photo of sticker** (decodes a
+    still photo, also rotated) and **type the number**. Torch button appears when the camera supports it.
+  - **iPhone/iPad notes**: Safari has no BarcodeDetector, so ZXing decodes on the main thread — hold the sticker 10–20 cm away in good light and give
+    it a second; the torch is usually not offered on iOS. A Home Screen install may ask for camera permission again each launch. If you tapped *Don't
+    Allow*, re-enable it in *Settings → Apps → Safari → Camera* (or the aA menu → Website Settings). *Take photo* is the reliable fallback.
 - **Supabase client**: `js/vendor/supabase.js` is the vendored supabase-js 2.117.2 UMD build (MIT, see `supabase-js.LICENSE`) — no CDN.
 - **Service worker** caches only the app's own files (`config.js` network-first); it never touches Supabase API/storage requests.
   **Bump `VERSION` in `sw.js` whenever you change files** so installed copies refresh.
@@ -88,6 +112,10 @@ which only matters for password resets. Free-plan projects pause after a week of
 - `GV_URL=http://127.0.0.1:8766/ node tools/browser-test.mjs` — headless desktop / iPad / iPhone run (needs playwright and a local server).
   Uses an in-browser **fake Supabase client** (`tools/fake-supabase.js`, injected through `window.__GV_TEST_SUPABASE__`) that simulates auth, TOTP
   (code `246810`), owner-only + aal2 RLS and storage — no real project needed. Writes `screenshots/`.
-- `tools/test-sql.sh` — runs the migration twice (idempotency) against a local Postgres with small Supabase stubs (`supabase/tests/local-stub.sql`)
-  and then `supabase/tests/rls-test.sql` (25 checks: aal1 gets nothing, cross-user isolation, forged owner_id, foreign folders in storage, cross-owner links, anon…).
+- Browser test section *1b* covers the Electromaxx field: validation/duplicates, CSV aliases, carnet toggle, decoding every barcode fixture from a
+  photo, a **live scan through Chromium's fake camera** (a y4m video built from `tools/fixtures/camera-004222.png`) with ZXing, and a mocked native
+  `BarcodeDetector`. Fixtures are made with `tools/make-barcodes.py` (needs `python-barcode`, `qrcode`, `pillow`).
+- `tools/test-sql.sh` — runs the migrations twice (idempotency) against a local Postgres with small Supabase stubs (`supabase/tests/local-stub.sql`)
+  and then `supabase/tests/rls-test.sql` (25 checks: aal1 gets nothing, cross-user isolation, forged owner_id, foreign folders in storage, cross-owner links, anon…), then `supabase/tests/electromaxx-test.sql`
+  (10 checks: 6-digit format, NULL allowed, unique per owner on insert/update, other owners may reuse a number, `show_emx` default).
 - Icons: `node tools/make-icons.mjs` (needs playwright).

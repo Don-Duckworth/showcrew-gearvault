@@ -1,4 +1,5 @@
 // ShowCrew GearVault — pure carnet / CSV logic (no DOM). Tested by tools/test-carnet.mjs.
+import { looseEmx } from './emx.js';
 export const LB_PER_KG = 2.2046226218;
 export const toKg = (w, unit) => (w == null ? null : unit === 'lb' ? w / LB_PER_KG : w);
 export const fromKg = (kg, unit) => (kg == null ? null : unit === 'lb' ? kg * LB_PER_KG : kg);
@@ -46,7 +47,7 @@ export function buildGeneralList(S, trip) {
   const lines = tripItems(S, trip).map(({ item: i, kit }, n) => {
     const qty = Math.max(1, i.qty || 1), uv = unitValue(i), wkg = toKg(i.weight, i.weightUnit);
     return {
-      no: n + 1, itemId: i.id, kit, description: tradeDescription(i, trip.serialInDesc), serial: (i.serial || '').trim(), pieces: qty,
+      no: n + 1, itemId: i.id, kit, description: tradeDescription(i, trip.serialInDesc), serial: (i.serial || '').trim(), emx: i.emx || '', pieces: qty,
       weight: wkg == null ? null : round2(fromKg(wkg * qty, wu)), value: uv == null ? null : round2(uv * qty), unitValue: uv,
       currency: i.currency || cur, origin: (i.origin || '').trim(), usesCurrent: i.currentValue != null, issues: itemIssues(i, cur),
     };
@@ -87,26 +88,28 @@ export function parseCSV(text) {
 }
 
 export function generalListCSV(gl, trip) {
+  const emx = !!trip.emxCol; // optional internal asset-tag column (off by default)
   const rows = [
     ['ATA Carnet General List', trip.name || ''],
     ['Holder', trip.holder || ''], ['Destination(s)', trip.destinations || ''], ['Dates', [trip.depart, trip.ret].filter(Boolean).join(' to ')],
     ['Carnet no.', trip.carnetNo || ''], ['Values', `Current fair market value in ${gl.currency}`], [],
-    ['Item No.', 'Trade description of goods (make, model, description)', 'Serial number', 'Number of pieces', `Weight (${gl.weightUnit})`, `Value (${gl.currency})`, 'Country of origin'],
-    ...gl.lines.map(l => [l.no, l.description, l.serial, l.pieces, l.weight == null ? '' : l.weight.toFixed(2), l.value == null ? '' : l.value.toFixed(2), l.origin]),
-    ['', 'TOTAL', '', gl.totals.pieces, gl.totals.weight.toFixed(2), gl.totals.value.toFixed(2), ''],
+    ['Item No.', 'Trade description of goods (make, model, description)', 'Serial number', ...(emx ? ['Electromaxx #'] : []), 'Number of pieces', `Weight (${gl.weightUnit})`, `Value (${gl.currency})`, 'Country of origin'],
+    ...gl.lines.map(l => [l.no, l.description, l.serial, ...(emx ? [l.emx] : []), l.pieces, l.weight == null ? '' : l.weight.toFixed(2), l.value == null ? '' : l.value.toFixed(2), l.origin]),
+    ['', 'TOTAL', '', ...(emx ? [''] : []), gl.totals.pieces, gl.totals.weight.toFixed(2), gl.totals.value.toFixed(2), ''],
   ];
   return toCSV(rows);
 }
 
 // ---------- inventory CSV ----------
 export const INV_COLS = [
-  ['id', 'id'], ['name', 'name'], ['category', 'category'], ['make', 'make'], ['model', 'model'], ['serial', 'serial'], ['qty', 'qty'],
+  ['id', 'id'], ['name', 'name'], ['category', 'category'], ['make', 'make'], ['model', 'model'], ['serial', 'serial'], ['Electromaxx #', 'emx'], ['qty', 'qty'],
   ['status', 'status'], ['purchase_date', 'purchaseDate'], ['purchase_price', 'price'], ['currency', 'currency'], ['current_value', 'currentValue'],
   ['vendor', 'vendor'], ['country_of_origin', 'origin'], ['weight', 'weight'], ['weight_unit', 'weightUnit'], ['tags', 'tags'], ['notes', 'notes'],
 ];
 const ALIASES = {
   name: ['name', 'description', 'item', 'item name'], category: ['category', 'type'], make: ['make', 'brand', 'manufacturer'], model: ['model'],
-  serial: ['serial', 'serial number', 'serial no', 's/n', 'sn'], qty: ['qty', 'quantity', 'pieces', 'number of pieces'], status: ['status'],
+  serial: ['serial', 'serial number', 'serial no', 's/n', 'sn'],
+  emx: ['electromaxx #', 'electromaxx', 'electromaxx no', 'electromaxx no.', 'electromaxx number', 'electromaxx_no', 'electromaxx gear number', 'electromaxx gear #', 'emx', 'emx #', 'emx no', 'gear number', 'gear #', 'asset tag', 'asset #', 'asset number', 'asset no', 'barcode'], qty: ['qty', 'quantity', 'pieces', 'number of pieces'], status: ['status'],
   purchaseDate: ['purchase_date', 'purchase date', 'date purchased', 'date'], price: ['purchase_price', 'purchase price', 'price', 'cost'],
   currency: ['currency'], currentValue: ['current_value', 'current value', 'value', 'fair market value', 'fmv'], vendor: ['vendor', 'seller', 'store', 'supplier'],
   origin: ['country_of_origin', 'country of origin', 'origin', 'coo'], weight: ['weight'], weightUnit: ['weight_unit', 'weight unit', 'unit'],
@@ -118,9 +121,9 @@ export function inventoryCSV(items) {
 /** Returns plain objects keyed by item field names (unsanitized). */
 export function parseInventoryCSV(text) {
   const rows = parseCSV(text); if (rows.length < 2) throw new Error('CSV needs a header row and at least one item');
-  const head = rows[0].map(h => h.trim().toLowerCase());
+  const head = rows[0].map(h => h.trim().toLowerCase().replace(/\s+/g, ' '));
   const map = {}; for (const [k, al] of Object.entries(ALIASES)) { const ix = head.findIndex(h => al.includes(h)); if (ix >= 0) map[k] = ix; }
   if (map.name == null && map.model == null && map.id == null) throw new Error('CSV needs a "name" (or "model", or "id") column');
-  return rows.slice(1).map(r => { const o = {}; for (const [k, ix] of Object.entries(map)) o[k] = (r[ix] ?? '').trim(); if (o.status) o.status = o.status.toLowerCase(); return o; })
+  return rows.slice(1).map(r => { const o = {}; for (const [k, ix] of Object.entries(map)) o[k] = (r[ix] ?? '').trim(); if (o.status) o.status = o.status.toLowerCase(); if (o.emx != null) { o.emxRaw = o.emx; o.emx = looseEmx(o.emx); } return o; })
     .filter(o => o.name || o.model || o.id);
 }

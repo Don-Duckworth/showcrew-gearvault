@@ -61,6 +61,10 @@
           r.owner_id = uid;
           for (const [col, parent] of FK[this.t] || []) if (!db.tables[parent].some(p => p.id === r[col] && p.owner_id === uid)) return { data: null, error: err(`insert or update on table "${this.t}" violates foreign key constraint (${col})`, '23503') };
           if (this.t === 'attachments' && r.path.split('/')[0] !== uid) return { data: null, error: err('check constraint violated (path)', '23514') };
+          if (this.t === 'items' && r.electromaxx_no != null) { // mirrors 0002_electromaxx.sql
+            if (!/^[0-9]{6}$/.test(r.electromaxx_no)) return { data: null, error: err('new row for relation "items" violates check constraint "items_electromaxx_no_format"', '23514') };
+            if (tbl.some(x => x.owner_id === uid && x.id !== r.id && x.electromaxx_no === r.electromaxx_no)) return { data: null, error: err('duplicate key value violates unique constraint "items_owner_electromaxx_uidx"', '23505') };
+          }
           const k = kv(this.t, r, this.conflict), ix = tbl.findIndex(x => kv(this.t, x, this.conflict) === k);
           if (ix >= 0) { if (tbl[ix].owner_id !== uid) return { data: null, error: err('new row violates row-level security policy', '42501') }; tbl[ix] = { ...tbl[ix], ...r, updated_at: now }; }
           else tbl.push({ created_at: now, updated_at: now, ...r });

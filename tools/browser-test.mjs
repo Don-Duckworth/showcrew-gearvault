@@ -43,8 +43,8 @@ trailer<</Root 1 0 R>>
 await gen.close();
 
 const PLACEHOLDER_CONFIG = "export const SUPABASE_URL='https://YOUR-PROJECT-REF.supabase.co'; export const SUPABASE_ANON_KEY='YOUR-ANON-OR-PUBLISHABLE-KEY'; export const ALLOW_SIGNUP=false; export const STORAGE_BUCKET='gear-files';";
-async function newCtx(viewport, { fake = true, opts = {}, ctxOpts = {}, url = URL } = {}) {
-  const ctx = await browser.newContext({ viewport, deviceScaleFactor: 2, acceptDownloads: true, ...ctxOpts });
+async function newCtx(viewport, { fake = true, opts = {}, ctxOpts = {}, url = URL, br = browser } = {}) {
+  const ctx = await br.newContext({ viewport, deviceScaleFactor: 2, acceptDownloads: true, ...ctxOpts });
   if (fake) { await ctx.addInitScript(o => { window.__FAKE_SB_OPTS = o; }, opts); await ctx.addInitScript({ path: FAKE }); }
   else await ctx.route('**/js/config.js', r => r.fulfill({ contentType: 'text/javascript', body: PLACEHOLDER_CONFIG })); // simulate an unfilled config
   await ctx.route(/supabase\.(co|in)\//, r => r.abort()); // tests must never talk to a real project
@@ -120,7 +120,7 @@ ok(T.settings.length === 1 && T.categories.length === 11, 'first run writes sett
 ok((await page.locator('#netBadge').innerText()).includes('SYNCED'), 'cloud badge shows SYNCED');
 
 // ----- CRUD + uploads -----
-await addItem(page, { name: 'SAMPLE Show laptop A', category: 'Laptop – Mac', make: 'Apple', model: 'MacBook Pro 16" M3 Max', serial: 'SAMPLE-C02XK1', purchaseDate: '2024-02-12', price: '3499', vendor: 'Apple Store (sample)', origin: 'China', weight: '2.14', tagsText: 'millumin, playback' },
+await addItem(page, { name: 'SAMPLE Show laptop A', category: 'Laptop – Mac', make: 'Apple', model: 'MacBook Pro 16" M3 Max', serial: 'SAMPLE-C02XK1', emx: '004217', purchaseDate: '2024-02-12', price: '3499', vendor: 'Apple Store (sample)', origin: 'China', weight: '2.14', tagsText: 'millumin, playback' },
   [['photo', 'laptop.png', 'image/png', photoA], ['receipt', 'receipt.pdf', 'application/pdf', pdf], ['receipt', 'receipt-photo.png', 'image/png', receiptPng]]);
 T = await fdb(page);
 let it = T.items[0];
@@ -131,7 +131,7 @@ let objs = await page.evaluate(() => __fakeSb.objects());
 ok(objs.length === 5 && objs.filter(o => o.endsWith('.thumb.jpg')).length === 2, 'files uploaded to private bucket (3 files + 2 image thumbnails)');
 await page.waitForFunction(() => document.querySelector('.gear .thumb img')?.naturalWidth > 0);
 ok(true, 'list thumbnail loaded from storage');
-await addItem(page, { name: 'SAMPLE Playback PC', category: 'Rack-mount PC', make: 'SampleCorp', model: '2U Media Server', serial: 'SAMPLE-RK2U-0042', purchaseDate: '2023-09-01', price: '6200', currentValue: '4800', vendor: 'Integrator (sample)', origin: 'Taiwan', weight: '18', tagsText: 'millumin' }, [['photo', 'rack.png', 'image/png', photoB]]);
+await addItem(page, { name: 'SAMPLE Playback PC', category: 'Rack-mount PC', make: 'SampleCorp', model: '2U Media Server', serial: 'SAMPLE-RK2U-0042', emx: '004230', purchaseDate: '2023-09-01', price: '6200', currentValue: '4800', vendor: 'Integrator (sample)', origin: 'Taiwan', weight: '18', tagsText: 'millumin' }, [['photo', 'rack.png', 'image/png', photoB]]);
 await addItem(page, { name: 'SAMPLE Audio interface', category: 'Audio / sound device', make: 'Focusrite', model: 'Scarlett 4i4', serial: 'SAMPLE-S4I4-777', price: '249.99', origin: 'China', weight: '0.6' });
 await addItem(page, { name: 'SAMPLE Starlink Mini', category: 'Network (e.g. Starlink Mini)', make: 'Starlink', model: 'Mini', serial: 'SAMPLE-SLM-001', price: '499', weight: '1.1' });
 await addItem(page, { name: 'SAMPLE HDMI cables 3 m', category: 'Cable / accessory', make: 'Generic', qty: '6', price: '15', origin: 'China', weight: '0.2' });
@@ -167,7 +167,9 @@ T = await fdb(page);
 ok(T.items.length === 5 && (await page.evaluate(() => __fakeSb.objects())).length === 6, 'deleting an item removes its row, attachment rows and files');
 const dash = await page.locator('#dash').innerText();
 ok(dash.includes('$8,239') && dash.includes('3/5'), 'dashboard totals + carnet-ready 3/5: ' + dash.replace(/\s+/g, ' '));
-await page.fill('#q', 'RK2U'); ok((await page.locator('.gear').count()) === 1, 'search by serial'); await page.fill('#q', '');
+await page.fill('#q', 'RK2U'); ok((await page.locator('.gear').count()) === 1, 'search by serial');
+await page.fill('#q', '004230'); ok((await page.locator('.gear').count()) === 1 && (await page.locator('.gear .emxtag').innerText()).includes('004230'), 'search by Electromaxx #; amber tag on the row'); await page.fill('#q', '');
+ok((await fdb(page)).items.find(i => i.name === 'SAMPLE Show laptop A').electromaxx_no === '004217', 'Electromaxx # saved to items.electromaxx_no');
 await shot(page, 'desktop-gear-list.png');
 
 // ----- kits -----
@@ -257,6 +259,7 @@ ok((await page.locator('#netBadge').innerText()).includes('SYNCED'), 'tap badge 
 await page.click('#nav [data-view=data]');
 const bkPath = await dl(page, () => page.click('[data-act=exportBackup]'));
 const bk = JSON.parse(fs.readFileSync(bkPath, 'utf8'));
+ok(bk.data.items.some(i => i.emx === '004217'), 'backup JSON includes Electromaxx #');
 ok(bk.format === 2 && bk.data.items.length === 5 && Object.keys(bk.files).length === 3 && Object.values(bk.files).every(f => f.data.startsWith('data:')), 'backup JSON from cloud: 5 items + 3 files base64');
 await shot(page, 'desktop-data.png');
 await page.click('[data-act=eraseAll]'); await page.click('.overlay [data-r="1"]'); await page.waitForFunction(() => /erased/.test(document.getElementById('toast').textContent)); await settled(page);
@@ -266,6 +269,7 @@ await page.setInputFiles('#view input[data-import=backup]', bkPath); await page.
 await page.waitForFunction(() => /^Restored/.test(document.getElementById('toast').textContent), null, { timeout: 15000 }); await settled(page);
 T = await fdb(page);
 ok(T.items.length === 5 && T.kits.length === 2 && T.kit_items.length === 4 && T.trips.length === 1 && T.attachments.length === 3, 'restore backup → cloud rows back');
+ok(T.items.filter(i => i.electromaxx_no).map(i => i.electromaxx_no).sort().join() === '004217,004230', 'restore backup → Electromaxx numbers back');
 ok((await page.evaluate(() => __fakeSb.objects())).length === 6, 'restore backup → files re-uploaded (3 images + 3 thumbs)');
 // CSV import
 fs.writeFileSync(TMP + 'import.csv', 'Description,Brand,Model,Serial Number,Price,Country of Origin,Category,Tags\nSAMPLE Dock,CalDigit,TS4,SAMPLE-TS4-9,399.99,China,Docking station / hub,dock; spare\n');
@@ -307,6 +311,159 @@ await unlocked(page);
 ok((await page.evaluate(() => __fakeSb.db.users[0].password)) === 'a brand new long password', 'password updated, app unlocked');
 await ctx.close();
 
+// ======================= 1b. Electromaxx # + barcode scanning =======================
+const FIX = new globalThis.URL('./fixtures/', import.meta.url).pathname;
+async function login(page) { await signIn(page); await page.waitForSelector('#auth #qr'); await code(page); await unlocked(page); await settled(page); }
+const toastText = page => page.locator('#toast').innerText();
+const scanPhoto = async (page, file, btn = '[data-act=scanSearch]') => {
+  await page.click(btn); await page.waitForSelector('#scanner');
+  await page.setInputFiles('#scanner input[data-s=photo]', FIX + file);
+};
+const noScanner = page => page.waitForSelector('#scanner', { state: 'detached', timeout: 15000 });
+
+// --- A: no camera device (desktop Chromium on Linux has no BarcodeDetector → ZXing; getUserMedia fails → fallbacks) ---
+({ ctx, page, errs } = await newCtx({ width: 1366, height: 900 }));
+await login(page);
+await addItem(page, { name: 'SAMPLE Show laptop A', category: 'Laptop – Mac', make: 'Apple', model: 'MacBook Pro 16"', serial: 'SAMPLE-C02XK1', emx: '004217', price: '3499', origin: 'China' });
+await page.click('#addBtn'); await page.waitForSelector('.overlay [data-f=emx]');
+ok((await page.getAttribute('.overlay [data-f=emx]', 'inputmode')) === 'numeric' && (await page.getAttribute('.overlay [data-f=emx]', 'maxlength')) === '6', 'Electromaxx # field: numeric keypad (inputmode=numeric), max 6');
+await page.fill('.overlay [data-f=name]', 'SAMPLE Audio interface'); await page.fill('.overlay [data-f=serial]', 'SAMPLE-S4I4-777');
+await page.type('.overlay [data-f=emx]', 'ab12x3');
+ok((await page.inputValue('.overlay [data-f=emx]')) === '123' && (await page.innerText('#emxHint')).includes('3/6'), 'non-digits dropped, live “3/6 digits” hint');
+await page.click('.overlay [data-act=saveItem]');
+ok((await page.locator('.overlay').count()) === 1 && (await toastText(page)).includes('exactly 6 digits'), 'save blocked until 6 digits');
+await page.fill('.overlay [data-f=emx]', '004217');
+ok((await page.innerText('#emxHint')).includes('Already on') && (await page.innerText('#emxHint')).includes('Show laptop A'), 'duplicate number warned live (names the other item)');
+await page.click('.overlay [data-act=saveItem]');
+ok((await page.locator('.overlay').count()) === 1 && (await toastText(page)).includes('already on'), 'save blocked for a duplicate (cloud enforces one number per owner)');
+await page.fill('.overlay [data-f=emx]', '004218');
+ok((await page.innerText('#emxHint')).includes('unique'), '✓ unique hint');
+await page.fill('.overlay [data-f=make]', 'Focusrite'); await page.fill('.overlay [data-f=model]', 'Scarlett 4i4');
+await shot(page, 'desktop-item-editor-emx.png');
+await page.click('.overlay [data-act=saveItem]'); await page.waitForFunction(() => !document.querySelector('.overlay')); await settled(page);
+await addItem(page, { name: 'SAMPLE Starlink Mini', category: 'Network (e.g. Starlink Mini)', serial: 'SAMPLE-SLM-001', price: '499', origin: 'China' });
+T = await fdb(page);
+ok(T.items.map(i => i.electromaxx_no).sort().join() === ',004217,004218' || T.items.map(i => String(i.electromaxx_no)).sort().join() === '004217,004218,null', 'cloud: electromaxx_no saved, NULL when empty');
+ok((await page.locator('.gear .emxtag').count()) === 2, 'list rows show the amber Electromaxx tag');
+await page.selectOption('[data-filter=sort]', 'emx');
+ok((await page.locator('.gear .g-name').allInnerTexts()).join('|') === 'SAMPLE Show laptop A|SAMPLE Audio interface|SAMPLE Starlink Mini', 'sort by Electromaxx # (numbered first)');
+await page.selectOption('[data-filter=fStatus]', 'emx:none'); ok((await page.locator('.gear').count()) === 1, 'filter: no Electromaxx # yet');
+await page.selectOption('[data-filter=fStatus]', 'emx:has'); ok((await page.locator('.gear').count()) === 2, 'filter: has Electromaxx #');
+await page.selectOption('[data-filter=fStatus]', ''); await page.selectOption('[data-filter=sort]', 'name');
+// scanner without a camera → graceful fallback + photo decoding (ZXing)
+await page.click('[data-act=scanSearch]'); await page.waitForSelector('#scanner');
+await page.waitForFunction(() => /Could not|No live|denied/.test(document.querySelector('#scanner .scan-status').textContent));
+ok((await page.getAttribute('#scanner', 'data-engine')) === 'zxing' && /photo|type/.test(await page.innerText('#scanner .scan-status')), 'no camera → explains, offers photo / typing; engine = vendored ZXing (no BarcodeDetector here)');
+await page.type('#scanner [data-s=manual]', '0042x18'); ok((await page.inputValue('#scanner [data-s=manual]')) === '004218', 'manual entry keeps digits only');
+await page.click('#scanner [data-s=use]'); await noScanner(page); await page.waitForSelector('.overlay [data-f=emx]');
+ok((await page.inputValue('.overlay [data-f=name]')) === 'SAMPLE Audio interface' && (await page.inputValue('#q')) === '004218', 'manual entry → jumps to the matching item');
+await page.click('.overlay [data-act=cancelEdit]');
+await scanPhoto(page, 'code128-004217.png'); await noScanner(page); await page.waitForSelector('.overlay [data-f=emx]');
+ok((await page.inputValue('.overlay [data-f=name]')) === 'SAMPLE Show laptop A' && (await page.evaluate(() => __gv.Scan.last.via)) === 'photo', 'photo of a Code 128 sticker → item opened');
+await page.click('.overlay [data-act=cancelEdit]');
+await scanPhoto(page, 'code39-EMX-004218.png'); await noScanner(page); await page.waitForSelector('.overlay [data-f=emx]');
+ok((await page.inputValue('.overlay [data-f=name]')) === 'SAMPLE Audio interface', 'Code 39 “EMX-004218” → 6-digit number extracted → item opened');
+await page.click('.overlay [data-act=cancelEdit]');
+for (const [file, n, label] of [['itf-004219.png', '004219', 'ITF'], ['ean13-004220.png', '004220', 'EAN-13 (check digit + zero padding stripped)'], ['qr-004221.png', '004221', 'QR code with a URL']]) {
+  await scanPhoto(page, file); await noScanner(page); await page.waitForSelector('.overlay', { hasText: 'No gear with' });
+  ok((await page.locator('.overlay').innerText()).includes(n), `${label} → ${n} (not in inventory → offers to add)`);
+  if (n === '004219') {
+    await page.click('.overlay [data-r=new]'); await page.waitForSelector('.overlay [data-f=emx]');
+    ok((await page.inputValue('.overlay [data-f=emx]')) === '004219', '“Add new gear with #” pre-fills the number');
+    await page.fill('.overlay [data-f=name]', 'SAMPLE Dock'); await page.click('.overlay [data-act=saveItem]'); await settled(page);
+  } else await page.click('.overlay [data-r=""]');
+}
+await scanPhoto(page, 'code128-no-number.png');
+await page.waitForFunction(() => /no 6-digit/.test(document.querySelector('#scanner .scan-status').textContent));
+ok(true, 'barcode without a 6-digit number → explained, scanner stays open');
+await page.keyboard.press('Escape'); await noScanner(page);
+// editor scan button (photo) fills the field
+await page.fill('#q', ''); await page.locator('.gear', { hasText: 'Starlink' }).click(); await scanPhoto(page, 'qr-004221.png', '.overlay [data-act=scanEmx]'); await noScanner(page);
+ok((await page.inputValue('.overlay [data-f=emx]')) === '004221', 'editor Scan button fills the Electromaxx # field');
+await page.click('.overlay [data-act=saveItem]'); await settled(page);
+T = await fdb(page); ok(T.items.find(i => i.name === 'SAMPLE Starlink Mini').electromaxx_no === '004221', '…and saves to the cloud');
+// inventory CSV export / import
+let invPath = await dl(page, () => page.click('[data-act=exportInvCSV]'));
+let inv = fs.readFileSync(invPath, 'utf8');
+ok(inv.split('\r\n')[0].includes('Electromaxx #') && inv.includes(',004217,'), 'inventory CSV has an “Electromaxx #” column');
+fs.writeFileSync(TMP + 'emx.csv', 'Name,Asset Tag,Serial Number\nSAMPLE Cable kit,4223,SAMPLE-CK\nSAMPLE Bad tag,ABC,SAMPLE-BT\nSAMPLE Clash,004217,SAMPLE-CL\n');
+await page.click('#nav [data-view=data]'); await page.setInputFiles('#view input[data-import=csv]', TMP + 'emx.csv');
+await page.waitForFunction(() => /CSV:/.test(document.getElementById('toast').textContent)); const csvToast = await toastText(page); await settled(page);
+T = await fdb(page);
+ok(T.items.find(i => i.name === 'SAMPLE Cable kit')?.electromaxx_no === '004223', 'CSV import: “Asset Tag” alias, Excel-stripped zeros restored (4223 → 004223)');
+ok(T.items.find(i => i.name === 'SAMPLE Bad tag')?.electromaxx_no == null && T.items.find(i => i.name === 'SAMPLE Clash')?.electromaxx_no == null && T.items.find(i => i.name === 'SAMPLE Show laptop A').electromaxx_no === '004217', 'CSV import: invalid and duplicate numbers dropped, existing item keeps its number');
+ok(/1 invalid/.test(csvToast) && /1 duplicate/.test(csvToast), 'CSV import toast reports skipped numbers: ' + csvToast);
+// carnet column toggle (default off)
+await page.click('#nav [data-view=trips]'); await page.click('[data-act=newTrip]');
+await page.click('[data-act=pickTripItems]'); for (const n of ['Show laptop A', 'Audio interface']) await page.locator('.overlay .pick', { hasText: n }).click();
+await page.click('.overlay [data-act=saveTripItems]'); await settled(page);
+ok((await page.locator('#tripLines th', { hasText: 'EMX' }).count()) === 0, 'carnet: Electromaxx column off by default');
+await page.check('[data-tf=emxCol]'); await settled(page);
+ok((await page.locator('#tripLines th', { hasText: 'EMX' }).count()) === 1 && (await page.locator('#tripLines td.emxc').first().innerText()) === '004217', 'toggle on → EMX # column in the trip table');
+T = await fdb(page); ok(T.trips[0].show_emx === true, 'toggle saved (trips.show_emx)');
+await page.click('#view [data-act=csvCarnet]'); csvPath = await dl(page, () => page.click('.overlay [data-r="1"]'));
+csv = fs.readFileSync(csvPath, 'utf8');
+ok(/Serial number,Electromaxx #,Number of pieces/.test(csv) && /SAMPLE-C02XK1,004217,1,/.test(csv), 'carnet CSV gets the Electromaxx # column');
+await page.click('#view [data-act=previewCarnet]'); await page.waitForSelector('#printRoot.show .paper');
+ok((await page.locator('.paper th', { hasText: 'Electromaxx #' }).count()) === 1, 'printable general list gets the column');
+await page.click('.paperbar [data-act=closePaper]');
+await page.uncheck('[data-tf=emxCol]'); await settled(page);
+await page.click('#view [data-act=csvCarnet]'); csvPath = await dl(page, () => page.click('.overlay [data-r="1"]'));
+ok(!fs.readFileSync(csvPath, 'utf8').includes('Electromaxx'), 'toggle off → column gone from CSV');
+ok(errs.length === 0, 'no console errors (Electromaxx A) ' + JSON.stringify(errs));
+await ctx.close();
+
+// --- B: live camera (Chromium fake camera showing a Code 128 sticker) → ZXing ---
+const Y4M = TMP + 'camera-004222.y4m';
+{
+  const p = await browser.newPage(); await p.goto(URL);
+  const lum = await p.evaluate(async src => {
+    const img = new Image(); img.src = src; await img.decode();
+    const c = document.createElement('canvas'); c.width = 640; c.height = 480; const g = c.getContext('2d'); g.drawImage(img, 0, 0, 640, 480);
+    const d = g.getImageData(0, 0, 640, 480).data, y = new Array(640 * 480);
+    for (let i = 0; i < y.length; i++) y[i] = Math.round(0.299 * d[i * 4] + 0.587 * d[i * 4 + 1] + 0.114 * d[i * 4 + 2]);
+    return y;
+  }, 'data:image/png;base64,' + fs.readFileSync(FIX + 'camera-004222.png').toString('base64'));
+  await p.close();
+  const uv = Buffer.alloc(640 * 480 / 4, 128);
+  fs.writeFileSync(Y4M, Buffer.concat([Buffer.from('YUV4MPEG2 W640 H480 F10:1 Ip A1:1 C420jpeg\nFRAME\n'), Buffer.from(lum), uv, uv]));
+}
+const camBrowser = await chromium.launch({ args: ['--use-fake-ui-for-media-stream', '--use-fake-device-for-media-stream', '--use-file-for-fake-video-capture=' + Y4M] });
+({ ctx, page, errs } = await newCtx({ width: 1366, height: 900 }, { br: camBrowser, ctxOpts: { permissions: ['camera'] } }));
+await login(page);
+await page.evaluate(() => { window.__GV_SCAN_PAUSE__ = true; });
+await page.click('#addBtn'); await page.waitForSelector('.overlay [data-f=emx]'); await page.fill('.overlay [data-f=name]', 'SAMPLE Road case 1');
+await page.click('.overlay [data-act=scanEmx]'); await page.waitForSelector('#scanner[data-live="1"]');
+await page.waitForFunction(() => document.querySelector('#scanner video').videoWidth > 0);
+await page.waitForTimeout(300); await shot(page, 'desktop-scanner.png');
+await page.evaluate(() => { window.__GV_SCAN_PAUSE__ = false; }); await noScanner(page);
+ok((await page.inputValue('.overlay [data-f=emx]')) === '004222' && (await page.evaluate(() => __gv.Scan.last)).via === 'camera' && (await page.evaluate(() => __gv.Scan.last)).engine === 'zxing', 'live camera scan (ZXing) fills the field: 004222');
+ok(await page.evaluate(() => !document.querySelector('video') ), 'camera stopped / scanner removed after a hit');
+await page.click('.overlay [data-act=saveItem]'); await settled(page);
+await page.click('[data-act=scanSearch]'); await noScanner(page); await page.waitForSelector('.overlay [data-f=emx]');
+ok((await page.inputValue('.overlay [data-f=name]')) === 'SAMPLE Road case 1', 'search-bar scan with the camera jumps straight to the item');
+await page.click('.overlay [data-act=cancelEdit]');
+ok(errs.length === 0, 'no console errors (camera) ' + JSON.stringify(errs));
+await ctx.close(); await camBrowser.close();
+
+// --- C: native BarcodeDetector path (mocked; Chrome on Android / macOS has it) ---
+({ ctx, page, errs } = await newCtx({ width: 1366, height: 900 }));
+await ctx.addInitScript(() => {
+  window.__bdCalls = [];
+  window.BarcodeDetector = class { constructor(o) { window.__bdFormats = o.formats; } static async getSupportedFormats() { return ['code_128', 'code_39', 'ean_13', 'ean_8', 'upc_a', 'upc_e', 'itf', 'qr_code']; }
+    async detect(src) { window.__bdCalls.push(src.width); return [{ rawValue: 'GV|004217', format: 'code_128' }]; } };
+});
+await page.reload(); await login(page);
+await addItem(page, { name: 'SAMPLE Show laptop A', serial: 'SAMPLE-C02XK1', emx: '004217' });
+await scanPhoto(page, 'camera-004222.png'); await noScanner(page); await page.waitForSelector('.overlay [data-f=emx]');
+const fm = await page.evaluate(() => window.__bdFormats);
+ok((await page.evaluate(() => __gv.Scan.last.engine)) === 'native' && (await page.evaluate(() => window.__bdCalls.length)) > 0, 'BarcodeDetector used when available (ZXing not loaded)');
+ok(['code_128', 'code_39', 'ean_13', 'upc_a', 'itf', 'qr_code'].every(f => fm.includes(f)), 'native detector asked for Code128/39, EAN/UPC, ITF, QR: ' + fm.join(','));
+ok(await page.evaluate(() => !window.ZXing), 'vendored ZXing is only loaded when needed');
+ok((await page.inputValue('.overlay [data-f=name]')) === 'SAMPLE Show laptop A', 'native scan result → item opened');
+ok(errs.length === 0, 'no console errors (native) ' + JSON.stringify(errs));
+await ctx.close();
+
 // ======================= 2. v1 on-device data → cloud upload offer =======================
 ({ ctx, page, errs } = await newCtx({ width: 1180, height: 820 }, { ctxOpts: { hasTouch: true } }));
 await page.waitForSelector('#auth #email');
@@ -314,7 +471,7 @@ await page.evaluate(async ([photo]) => {
   const blob = new Blob([new Uint8Array(photo)], { type: 'image/png' });
   await window.__gv.Files.put('att_v1photo', blob, null);
   localStorage.setItem('showcrew.gearvault.v1', JSON.stringify({ v: 1, settings: { categories: ['Laptop – Mac', 'Other', 'My old category'], currency: 'USD', weightUnit: 'kg', holder: 'Don' },
-    items: [{ id: 'itm_old1', name: 'SAMPLE v1 MacBook', category: 'Laptop – Mac', make: 'Apple', model: 'MacBook Pro', serial: 'SAMPLE-V1-1', price: 2000, origin: 'China', atts: [{ id: 'att_v1photo', name: 'v1.png', type: 'image/png', size: blob.size, kind: 'photo' }] },
+    items: [{ id: 'itm_old1', name: 'SAMPLE v1 MacBook', category: 'Laptop – Mac', make: 'Apple', model: 'MacBook Pro', serial: 'SAMPLE-V1-1', emx: '004250', price: 2000, origin: 'China', atts: [{ id: 'att_v1photo', name: 'v1.png', type: 'image/png', size: blob.size, kind: 'photo' }] },
       { id: 'itm_old2', name: 'SAMPLE v1 Interface', category: 'Other', serial: 'SAMPLE-V1-2', price: 300, origin: 'Germany', atts: [] }],
     kits: [{ id: 'kit_old', name: 'Old rack', type: 'Rack', itemIds: ['itm_old1', 'itm_old2'] }],
     trips: [{ id: 'trp_old', name: 'Old trip', kitIds: ['kit_old'], itemIds: [], excluded: ['itm_old2'] }] }));
@@ -328,6 +485,7 @@ await page.waitForFunction(() => /^Uploaded/.test(document.getElementById('toast
 T = await fdb(page);
 ok(T.items.length === 2 && T.items.every(i => /^[0-9a-f-]{36}$/.test(i.id)) && T.kits.length === 1 && T.kit_items.length === 2 && T.trip_items.some(r => r.mode === 'exclude'), 'v1 items/kits/trips uploaded with UUID ids + relations');
 ok(T.attachments.length === 1 && (await page.evaluate(() => __fakeSb.objects())).length === 2, 'v1 photo uploaded (+ thumbnail)');
+ok(T.items.find(i => i.serial === 'SAMPLE-V1-1')?.electromaxx_no === '004250', 'v1 upload keeps an Electromaxx # (→ electromaxx_no)');
 ok(T.categories.some(c => c.name === 'My old category'), 'v1 custom categories merged');
 ok(await page.evaluate(() => !!localStorage.getItem('showcrew.gearvault.v1')), 'on-device copy kept until confirmed');
 await page.locator('#nav [data-view=data]').tap();
@@ -364,6 +522,9 @@ ok((await fdb(page)).items.length === 6, 'iPhone: add item + photo by touch → 
 await page.locator('#nav [data-view=gear]').tap(); await page.waitForFunction(() => [...document.querySelectorAll('.gear .thumb img')].every(i => i.naturalWidth > 0));
 ok(await noOverflow(page), 'iPhone: no horizontal overflow');
 await shot(page, 'iphone-gear.png');
+await page.locator('.gear', { hasText: 'Show laptop A' }).tap(); await page.waitForSelector('.overlay [data-f=emx]');
+await page.locator('.overlay [data-f=emx]').scrollIntoViewIfNeeded(); ok(await noOverflow(page), 'iPhone: editor with Electromaxx field fits');
+await shot(page, 'iphone-item-editor-emx.png'); await page.locator('.overlay [data-act=cancelEdit]').first().tap();
 await page.locator('#nav [data-view=trips]').tap(); await page.locator('.kcard').first().tap(); await page.waitForSelector('#tripLines tbody tr');
 ok(await noOverflow(page), 'iPhone: trip page fits');
 await shot(page, 'iphone-trip.png', { fullPage: true });

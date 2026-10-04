@@ -29,7 +29,7 @@ export function rowsFromState(S, uid) {
   const itemIds = new Set(S.items.map(i => i.id)), kitIds = new Set(S.kits.map(k => k.id));
   for (const i of S.items) {
     put('items', {
-      id: i.id, owner_id: uid, name: i.name, category: i.category, make: i.make, model: i.model, serial: i.serial, qty: i.qty, status: i.status,
+      id: i.id, owner_id: uid, name: i.name, category: i.category, make: i.make, model: i.model, serial: i.serial, electromaxx_no: i.emx || null, qty: i.qty, status: i.status,
       purchase_date: nz(i.purchaseDate), price: num(i.price), currency: i.currency, current_value: num(i.currentValue), vendor: i.vendor, origin: i.origin,
       weight: num(i.weight), weight_unit: i.weightUnit, notes: i.notes, tags: i.tags.slice(),
     });
@@ -44,7 +44,7 @@ export function rowsFromState(S, uid) {
   }
   for (const t of S.trips) {
     put('trips', { id: t.id, owner_id: uid, name: t.name, destinations: t.destinations || '', depart: nz(t.depart), return_date: nz(t.ret), carnet_no: t.carnetNo || '',
-      holder: t.holder || '', purpose: t.purpose || '', currency: t.currency, weight_unit: t.weightUnit, serial_in_desc: !!t.serialInDesc, notes: t.notes || '' });
+      holder: t.holder || '', purpose: t.purpose || '', currency: t.currency, weight_unit: t.weightUnit, serial_in_desc: !!t.serialInDesc, show_emx: !!t.emxCol, notes: t.notes || '' });
     t.kitIds.filter(id => kitIds.has(id)).forEach((kit_id, position) => put('trip_kits', { owner_id: uid, trip_id: t.id, kit_id, position }));
     const seen = new Set();
     t.itemIds.filter(id => itemIds.has(id)).forEach((item_id, position) => { seen.add(item_id); put('trip_items', { owner_id: uid, trip_id: t.id, item_id, mode: 'include', position }); });
@@ -64,7 +64,7 @@ export function stateFromRows(R) {
   const attBy = by(R.attachments, 'item_id'), kiBy = by(R.kit_items, 'kit_id'), tkBy = by(R.trip_kits, 'trip_id'), tiBy = by(R.trip_items, 'trip_id');
   const pos = (a, b) => a.position - b.position;
   const items = (R.items || []).map(r => Store.sanitizeItem({
-    id: r.id, name: r.name, category: r.category, make: r.make, model: r.model, serial: r.serial, qty: r.qty, status: r.status,
+    id: r.id, name: r.name, category: r.category, make: r.make, model: r.model, serial: r.serial, emx: r.electromaxx_no || '', qty: r.qty, status: r.status,
     purchaseDate: r.purchase_date || '', price: num(r.price), currency: r.currency, currentValue: num(r.current_value), vendor: r.vendor, origin: r.origin,
     weight: num(r.weight), weightUnit: r.weight_unit, notes: r.notes, tags: r.tags || [], created: ms(r.created_at), updated: ms(r.updated_at),
     atts: (attBy.get(r.id) || []).sort((a, b) => ms(a.added_at) - ms(b.added_at)).map(a => ({ id: a.id, name: a.name, type: a.mime, size: Number(a.size) || 0, kind: a.kind, added: ms(a.added_at), path: a.path, thumb: a.thumb_path })),
@@ -73,7 +73,7 @@ export function stateFromRows(R) {
   const trips = (R.trips || []).map(r => {
     const ti = (tiBy.get(r.id) || []).sort(pos);
     return { ...Store.makeTrip(settings), id: r.id, name: r.name, destinations: r.destinations || '', depart: r.depart || '', ret: r.return_date || '', carnetNo: r.carnet_no || '',
-      holder: r.holder || '', purpose: r.purpose || '', currency: r.currency || 'USD', weightUnit: r.weight_unit === 'lb' ? 'lb' : 'kg', serialInDesc: !!r.serial_in_desc, notes: r.notes || '',
+      holder: r.holder || '', purpose: r.purpose || '', currency: r.currency || 'USD', weightUnit: r.weight_unit === 'lb' ? 'lb' : 'kg', serialInDesc: !!r.serial_in_desc, emxCol: !!r.show_emx, notes: r.notes || '',
       kitIds: (tkBy.get(r.id) || []).sort(pos).map(x => x.kit_id), itemIds: ti.filter(x => x.mode !== 'exclude').map(x => x.item_id), excluded: ti.filter(x => x.mode === 'exclude').map(x => x.item_id),
       created: ms(r.created_at), updated: ms(r.updated_at) };
   });
