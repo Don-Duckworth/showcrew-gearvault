@@ -594,7 +594,8 @@ T = await fdb(page);
 ok(row('SAMPLE RAM kit').parent_id === PC && row('SAMPLE RAM kit').part_type === 'installed' && row('SAMPLE PSU cable').parent_id === row('SAMPLE Spare PSU').id && row('SAMPLE Orphan').parent_id == null, 'CSV import links parts by Parent Electromaxx # / Parent serial');
 ok(/2 linked as parts/.test(await toastText(page)) && /1 parent\(s\) not found/.test(await toastText(page)), 'CSV import message: ' + await toastText(page));
 // JSON backup includes the fields
-const bk = JSON.parse(fs.readFileSync(await dl(page, () => page.click('[data-act=exportBackup]')), 'utf8'));
+const keepBk = fs.readFileSync(bkPath); // same download filename as the section-1 backup used later
+const bk = JSON.parse(fs.readFileSync(await dl(page, () => page.click('[data-act=exportBackup]')), 'utf8')); fs.writeFileSync(bkPath, keepBk);
 ok(bk.data.items.find(i => i.name === 'SAMPLE GPU').parentId === PC && bk.data.items.find(i => i.name === 'SAMPLE GPU').partType === 'installed' && bk.data.trips[0].foldParts === false, 'JSON backup carries parentId / partType / foldParts');
 // delete a parent: delete parts too
 await page.click('#nav [data-view=gear]');
