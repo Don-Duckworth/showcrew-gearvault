@@ -102,4 +102,71 @@ ok(back3.find(o => o.name === 'Laptop').emx === '004217', 'inventory CSV re-impo
 for (const h of ['Electromaxx #', 'electromaxx no', 'Electromaxx  Number', 'EMX', 'Asset Tag', 'electromaxx_no']) {
   const o = C.parseInventoryCSV(`Name,${h}\nThing,4217\n`)[0]; ok(o.emx === '004217', `CSV alias “${h}”`);
 }
+
+// ---------- v2.2 parts & accessories ----------
+const P = await import('../js/parts.js');
+const PS = St.sanitizeState({ items: [
+  { id: 'pc', name: 'SAMPLE Playback PC', make: 'SampleCorp', model: '2U', serial: 'SAMPLE-PC1', emx: '004300', price: 5000, origin: 'Taiwan', weight: 18 },
+  { id: 'gpu', name: 'SAMPLE GPU', make: 'NVIDIA', model: 'RTX A4000', serial: 'SAMPLE-GPU1', price: 1000, origin: 'China', weight: 1, parentId: 'pc', partType: 'installed' },
+  { id: 'cap', name: 'SAMPLE Capture card', make: 'Blackmagic Design', model: 'DeckLink Duo 2', serial: 'SAMPLE-DL2', price: 500, origin: '', parentId: 'pc', partType: 'installed' },
+  { id: 'nvme', name: 'SAMPLE NVMe on GPU riser', serial: 'SAMPLE-NV1', price: 200, origin: 'Korea', parentId: 'gpu', partType: 'installed' },
+  { id: 'psu', name: 'SAMPLE Spare PSU', serial: 'SAMPLE-PSU1', price: 150, origin: 'China', weight: 2, qty: 2, parentId: 'pc', partType: 'accessory' },
+  { id: 'rem', name: 'SAMPLE Remote for PSU', serial: 'SAMPLE-REM', price: 20, origin: 'China', weight: 0.1, parentId: 'psu' },
+  { id: 'lap', name: 'SAMPLE Laptop', serial: 'SAMPLE-LAP', price: 3000, origin: 'China', weight: 2 },
+  { id: 'loop1', name: 'loop a', parentId: 'loop2' }, { id: 'loop2', name: 'loop b', parentId: 'loop1' }, { id: 'orphan', name: 'orphan', parentId: 'gone' } ],
+  kits: [{ id: 'k', name: 'Rack A', itemIds: ['pc'] }] });
+const pi = id => PS.items.find(i => i.id === id);
+ok(pi('rem').partType === 'accessory' && pi('lap').partType === '' && pi('gpu').partType === 'installed', 'partType normalized (parent without type → accessory, standalone → none)');
+ok(!pi('orphan').parentId && [pi('loop1'), pi('loop2')].filter(i => i.parentId).length === 1, 'sanitize drops dangling parents and breaks cycles');
+ok(P.descendants(PS.items, 'pc').map(i => i.id).join() === 'gpu,nvme,cap,psu,rem', 'descendants depth-first');
+ok(P.ancestors(PS.items, 'nvme').map(i => i.id).join() === 'gpu,pc', 'ancestors chain');
+ok(P.wouldCycle(PS.items, 'pc', 'nvme') && P.wouldCycle(PS.items, 'pc', 'pc') && !P.wouldCycle(PS.items, 'nvme', 'lap') && !P.wouldCycle(PS.items, 'lap', 'pc'), 'wouldCycle: self/descendant rejected, others ok');
+ok(P.normPartType('Installed inside') === 'installed' && P.normPartType('separate accessory') === 'accessory' && P.normPartType('Accessory') === 'accessory' && P.normPartType('x') === '', 'part type parsing');
+const vw = P.valueWithParts(PS.items, 'pc', C.unitValue);
+ok(vw.value === 5000 + 1000 + 500 + 200 + 300 + 20 && vw.parts === 5, 'value incl. parts: ' + vw.value);
+ok(PS.items.reduce((a, i) => a + (C.unitValue(i) || 0) * i.qty, 0) === 10020, 'flat total counts every item once (no double count)');
+ok(C.kitItems(PS, PS.kits[0]).length === 6, 'kit with a parent includes all its descendants');
+const PT = { ...St.makeTrip(), kitIds: ['k'], itemIds: ['lap'] };
+const pg = C.buildGeneralList(PS, PT);
+ok(pg.lines.map(l => l.no).join() === '1,1a,1b,1c,2,3,4', 'line numbers: installed = sub-lines 1a-1c, accessories numbered: ' + pg.lines.map(l => l.no).join());
+ok(pg.lines.map(l => l.itemId).join() === 'pc,gpu,nvme,cap,psu,rem,lap', 'order: parent, installed parts, accessories (and their accessories), then next item');
+ok(pg.lines[4].note === 'accessory to item 1' && pg.lines[5].note === 'accessory to item 2', 'accessory lines reference their parent line');
+ok(pg.totals.lines === 4 && pg.totals.subLines === 3 && pg.totals.pieces === 1 + 2 + 1 + 1, 'pieces count numbered lines only (installed parts are not extra pieces): ' + pg.totals.pieces);
+ok(pg.totals.value === 10020, 'totals include installed part values exactly once: ' + pg.totals.value);
+ok(pg.totals.weight === 18 + 4 + 0.1 + 2, 'installed parts add no weight (inside the parent): ' + pg.totals.weight);
+ok(pg.lines.find(l => l.itemId === 'cap').issues.some(x => x.k === 'origin') && !pg.lines.find(l => l.itemId === 'nvme').issues.some(x => x.k === 'weight'), 'missing-data checks apply to parts (no weight warning for installed)');
+const pgx = C.buildGeneralList(PS, { ...PT, excluded: ['gpu'] });
+ok(pgx.lines.map(l => l.itemId).join() === 'pc,cap,psu,rem,lap', 'excluding a part line leaves off that part (and its own parts)');
+const pgp = C.buildGeneralList(PS, { ...PT, excluded: ['pc'] });
+ok(pgp.lines.map(l => l.itemId).join() === 'lap', 'excluding a parent leaves off the parts that came with it');
+const pgi = C.buildGeneralList(PS, { ...St.makeTrip(), itemIds: ['cap', 'lap'] });
+ok(pgi.lines.map(l => `${l.no}:${l.itemId}`).join() === '1:cap,2:lap', 'part on its own (parent not on the trip) = normal numbered line');
+const pf = C.buildGeneralList(PS, { ...PT, foldParts: true });
+const pl = pf.lines[0];
+ok(pf.lines.length === 4 && !pf.lines.some(l => l.sub) && pl.value === 6700 && pl.folded.length === 3, 'fold: installed parts folded into parent line (value 5000+1000+500+200)');
+ok(/incl\. installed: .*S\/N SAMPLE-GPU1.*S\/N SAMPLE-NV1.*S\/N SAMPLE-DL2/.test(pl.description), 'fold: part serials appended to the description: ' + pl.description);
+ok(pf.totals.value === 10020 && pf.totals.pieces === 5 && pl.issues.some(x => x.k === 'origin' && /Capture/.test(x.msg)), 'fold: same totals; part issues flagged on the parent line');
+const pcsv = C.generalListCSV(pg, PT), prow = C.parseCSV(pcsv);
+const r1a = prow.find(r => r[0] === '1a'), r2 = prow.find(r => r[0] === '2');
+ok(r1a && r1a[1].includes('installed in item 1') && r1a[2] === 'SAMPLE-GPU1' && r1a[3] === '' && r1a[5] === '1000.00' && r1a[6] === 'China', 'general list CSV: sub-line 1a with serial, value, origin, no pieces');
+ok(r2 && r2[1].includes('accessory to item 1') && r2[3] === '2', 'general list CSV: accessory has its own line + pieces');
+ok(prow.some(r => r[1] === 'TOTAL' && r[3] === '5' && r[5] === '10020.00'), 'general list CSV: totals');
+const pinv = C.inventoryCSV(PS.items), head = pinv.split('\r\n')[0];
+ok(head.endsWith('Parent Electromaxx #,Parent serial,Part type'), 'inventory CSV: parent columns');
+const pback = C.parseInventoryCSV(pinv);
+ok(pback.find(o => o.name === 'SAMPLE GPU').parentEmx === '004300' && pback.find(o => o.name === 'SAMPLE GPU').partType === 'installed' && pback.find(o => o.name === 'SAMPLE NVMe on GPU riser').parentSerial === 'SAMPLE-GPU1', 'inventory CSV round-trip of parent links');
+ok(C.findParentFor(PS.items, { parentEmx: '004300' }).id === 'pc' && C.findParentFor(PS.items, { parentSerial: 'sample-psu1' }).id === 'psu' && C.findParentFor(PS.items, { parentSerial: 'nope' }) === null, 'CSV parent lookup by Electromaxx # or serial');
+const pal = C.parseInventoryCSV('Name,Parent EMX,Parent S/N,Part_Type\nSAMPLE RAM,4300,,Installed inside\nSAMPLE Bag,,SAMPLE-LAP,separate accessory\n');
+ok(pal[0].parentEmx === '004300' && pal[0].partType === 'installed' && pal[1].parentSerial === 'SAMPLE-LAP' && pal[1].partType === 'accessory', 'parent column aliases');
+// cloud rows
+const PS2 = St.sanitizeState(JSON.parse(JSON.stringify(PS))); await M.remapIds(PS2, UID);
+const PR = M.rowsFromState(PS2, UID), prs = [...PR.items.values()];
+const pos2 = n => prs.findIndex(r => r.name === n);
+ok(prs.find(r => r.name === 'SAMPLE GPU').parent_id === PS2.items.find(i => i.name === 'SAMPLE Playback PC').id && prs.find(r => r.name === 'SAMPLE GPU').part_type === 'installed' && prs.find(r => r.name === 'SAMPLE Laptop').parent_id === null && prs.find(r => r.name === 'SAMPLE Laptop').part_type === null, 'rows: parent_id remapped to UUID, part_type (NULL when standalone)');
+ok(pos2('SAMPLE Playback PC') < pos2('SAMPLE GPU') && pos2('SAMPLE GPU') < pos2('SAMPLE NVMe on GPU riser') && pos2('SAMPLE Spare PSU') < pos2('SAMPLE Remote for PSU'), 'rows: parents upserted before their parts');
+const PB = M.stateFromRows(Object.fromEntries(M.TABLES.map(t => [t, [...PR[t].values()]])));
+ok(PB.items.find(i => i.name === 'SAMPLE NVMe on GPU riser').parentId === PS2.items.find(i => i.name === 'SAMPLE GPU').id && PB.items.find(i => i.name === 'SAMPLE Spare PSU').partType === 'accessory', 'rows → state keeps parent links');
+const PT2 = { ...St.makeTrip(), foldParts: true }; PS2.trips = [PT2];
+ok([...M.rowsFromState(PS2, UID).trips.values()][0].fold_parts === true && M.stateFromRows(Object.fromEntries(M.TABLES.map(t => [t, [...M.rowsFromState(PS2, UID)[t].values()]]))).trips[0].foldParts === true, 'trips.fold_parts round-trip');
+ok(P.parentsFirst([{ id: 'c', parentId: 'b' }, { id: 'b', parentId: 'a' }, { id: 'a', parentId: '' }]).map(i => i.id).join() === 'a,b,c', 'parentsFirst ordering');
 console.log(fail ? `${fail} FAILED` : 'ALL PASS'); process.exit(fail ? 1 : 0);
