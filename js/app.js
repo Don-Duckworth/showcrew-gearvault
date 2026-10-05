@@ -9,14 +9,15 @@ import { createCloud } from './cloud.js';
 import * as CFG from './config.js';
 import * as Emx from './emx.js';
 import * as Scan from './scan.js';
+import * as P from './parts.js';
 
-const APP_VERSION = '2.0.0';
+const APP_VERSION = '2.2.0';
 const $ = (sel, el = document) => el.querySelector(sel);
 const $$ = (sel, el = document) => [...el.querySelectorAll(sel)];
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
 let S = Store.emptyState();
-const ui = { view: 'gear', q: '', fCat: '', fStatus: '', fTag: '', sort: 'name', tripId: null, edit: null };
+const ui = { view: 'gear', q: '', fCat: '', fStatus: '', fTag: '', sort: 'name', tripId: null, edit: null, collapsed: new Set() };
 
 // ---------- cloud session / sync state ----------
 let sb = null, cloud = null, user = null, bootOffline = false, syncErr = null, syncing = false, syncT = 0, retryT = 0;
@@ -67,6 +68,10 @@ const itemTitle = i => i.name || [i.make, i.model].filter(Boolean).join(' ') || 
 const kitsOf = id => S.kits.filter(k => k.itemIds.includes(id));
 const carnetErrs = i => C.itemIssues(i, S.settings.currency).filter(x => x.level === 'err');
 const inService = i => i.status === 'active' || i.status === 'repair';
+const itemById = id => S.items.find(i => i.id === id);
+const parentOf = i => (i && i.parentId ? itemById(i.parentId) : null);
+const lineVal = i => (C.unitValue(i) || 0) * (i.qty || 1);
+const PT_LABEL = { installed: 'installed', accessory: 'accessory' };
 
 // ---------- overlay layers (stackable modals) ----------
 const layers = [];
@@ -218,25 +223,44 @@ function filteredItems() {
     date: (a, b) => (b.purchaseDate || '').localeCompare(a.purchaseDate || ''), emx: (a, b) => (!a.emx - !b.emx) || (a.emx || '').localeCompare(b.emx || '') || nm(a).localeCompare(nm(b)), updated: (a, b) => b.updated - a.updated, missing: (a, b) => carnetErrs(b).length - carnetErrs(a).length || nm(a).localeCompare(nm(b)) }[ui.sort];
   return list.sort(cmp);
 }
-function gearRowHTML(i) {
+const listFiltered = () => !!(ui.q.trim() || ui.fCat || ui.fStatus || ui.fTag);
+function gearRowHTML(i, { depth = 0, kids = null, flat = false } = {}) {
   const img = firstImage(i), v = C.unitValue(i), errs = carnetErrs(i), kits = kitsOf(i.id);
   const flags = errs.map(e => `<span class="flag">⚠ ${esc({ serial: 'serial', value: 'value', origin: 'origin', currency: i.currency }[e.k] || e.k)}</span>`).join('')
     + (i.atts.some(a => a.kind === 'receipt') ? '<span class="flag ok">🧾 receipt</span>' : '') + (i.status !== 'active' ? `<span class="badge ${i.status}">${i.status}</span>` : '');
-  return `<button class="gear ${inService(i) ? '' : 'dimmed'}" data-act="editItem" data-id="${i.id}">
+  const ds = P.descendants(S.items, i.id), par = parentOf(i), pt = P.partTypeOf(i);
+  const vw = ds.length ? P.valueWithParts(S.items, i.id, C.unitValue) : null;
+  const partsTag = ds.length ? `<span class="partcount" ${kids ? `data-act="toggleParts" data-id="${i.id}" role="button" aria-expanded="${!ui.collapsed.has(i.id)}" title="Show / hide parts"` : ''}>${kids ? (ui.collapsed.has(i.id) ? '▸' : '▾') : '⧉'} ${plural(ds.length, 'part')}</span>` : '';
+  const partOf = par && (flat || depth === 0) ? `<span class="partof">↳ part of ${esc(itemTitle(par))}</span>` : '';
+  const ptTag = pt ? `<span class="pt ${pt}">${PT_LABEL[pt]}</span>` : '';
+  return `<button class="gear ${inService(i) ? '' : 'dimmed'} ${depth ? 'child' : ''}" style="${depth ? `--depth:${depth}` : ''}" data-act="editItem" data-id="${i.id}" data-depth="${depth}">
     <div class="thumb">${img ? `<img data-thumb="${img.id}" alt="">` : esc(catAbbr(i.category))}</div>
     <div style="min-width:0"><div class="g-name">${esc(itemTitle(i))}</div>
       <div class="g-mm">${esc([i.make, i.model].filter(Boolean).join(' ') || i.category)}</div>
       <div class="g-ids">${i.emx ? `<span class="emxtag" title="Electromaxx #">${EMX_GLYPH}${esc(i.emx)}</span>` : ''}<span class="g-sn ${i.serial ? '' : 'none'}">${i.serial ? 'S/N ' + esc(i.serial) : 'no serial'}</span></div>
+      ${partsTag || partOf || ptTag ? `<div class="g-parts">${ptTag}${partOf}${partsTag}</div>` : ''}
       ${flags ? `<div class="g-flags">${flags}</div>` : ''}</div>
     <div class="g-meta"><div>${esc(i.category)}</div><div class="row">${kits.map(k => `<span class="tag kit">▣ ${esc(k.name)}</span>`).join('')}${i.tags.map(t => `<span class="tag">#${esc(t)}</span>`).join('')}</div>${i.origin ? `<div>Origin: ${esc(i.origin)}</div>` : ''}</div>
-    <div class="g-val">${v == null ? '<span style="color:var(--amber)">—</span>' : money(v * (i.qty || 1), i.currency)}<small>${i.qty > 1 ? `${i.qty} × ${money(v, i.currency)}` : i.currentValue != null ? 'current value' : v != null ? 'purchase' : 'no value'}</small></div>
+    <div class="g-val">${v == null ? '<span style="color:var(--amber)">—</span>' : money(v * (i.qty || 1), i.currency)}<small>${i.qty > 1 ? `${i.qty} × ${money(v, i.currency)}` : i.currentValue != null ? 'current value' : v != null ? 'purchase' : 'no value'}</small>${vw ? `<small class="inclparts" title="Item + all its parts${vw.other ? ` (${vw.other} in another currency not included)` : ''}">${money(vw.value, vw.currency)} incl. parts</small>` : ''}</div>
   </button>`;
 }
 function renderGearList() {
   const el = $('#gearList'); if (!el) return;
   const list = filteredItems(), cur = S.settings.currency;
-  const total = list.reduce((a, i) => a + ((i.currency || cur) === cur ? (C.unitValue(i) || 0) * (i.qty || 1) : 0), 0);
-  el.innerHTML = list.length ? list.map(gearRowHTML).join('') + `<div class="listfoot">${plural(list.length, 'item')} shown · ${money(total, cur)}${list.length !== S.items.length ? ` · ${S.items.length} total` : ''}</div>`
+  // every item counted exactly once (a parent's "incl. parts" figure is informational only)
+  const total = list.reduce((a, i) => a + ((i.currency || cur) === cur ? lineVal(i) : 0), 0);
+  let rows;
+  if (listFiltered()) rows = list.map(i => gearRowHTML(i, { flat: true })).join('');
+  else {
+    // tree: roots in sort order, each followed by its parts (indented, same sort order among siblings)
+    const order = new Map(list.map((i, ix) => [i.id, ix])), kids = P.childIndex(list), ids = new Set(list.map(i => i.id));
+    const node = (i, depth) => {
+      const ch = (kids.get(i.id) || []).slice().sort((a, b) => order.get(a.id) - order.get(b.id));
+      return gearRowHTML(i, { depth, kids: ch }) + (ch.length && !ui.collapsed.has(i.id) ? `<div class="gkids" data-parent="${i.id}">${ch.map(c => node(c, depth + 1)).join('')}</div>` : '');
+    };
+    rows = list.filter(i => !i.parentId || !ids.has(i.parentId)).map(i => node(i, 0)).join('');
+  }
+  el.innerHTML = list.length ? rows + `<div class="listfoot">${plural(list.length, 'item')} shown · ${money(total, cur)}${list.length !== S.items.length ? ` · ${S.items.length} total` : ''}</div>`
     : `<div class="empty" style="padding:28px"><p>No gear matches these filters.</p><button class="btn sm ghost" data-act="clearFilters">Clear filters</button></div>`;
   hydrateThumbs(el);
 }
@@ -665,6 +689,7 @@ const ACTIONS = {
     S.trips.forEach(t => { t.itemIds = t.itemIds.filter(x => x !== d.id); t.excluded = t.excluded.filter(x => x !== d.id); });
     ui.edit = null; closeLayer(undefined, true); persist(); render(); toast('Deleted');
   },
+  toggleParts: el => { const id = el.dataset.id; ui.collapsed.has(id) ? ui.collapsed.delete(id) : ui.collapsed.add(id); renderGearList(); },
   toggleEditKit: el => { const s = ui.edit.kits, id = el.dataset.id; s.has(id) ? s.delete(id) : s.add(id); el.classList.toggle('on', s.has(id)); },
   viewAtt: (el, e) => { if (e.target.closest('.x')) return; const a = ui.edit?.d.atts.find(x => x.id === el.dataset.id); if (a) viewAtt(a); },
   removeAtt: async el => { const E = ui.edit, a = E.d.atts.find(x => x.id === el.dataset.id); if (!a) return; if (!(await confirmBox(`Remove ${a.kind} “${a.name}”?`, 'Remove'))) return; E.d.atts = E.d.atts.filter(x => x !== a); E.pendingDel.push(a.id); (E.removed = E.removed || []).push(a); renderAtts(); },
