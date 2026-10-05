@@ -1,4 +1,4 @@
-# ShowCrew GearVault — ShowCrew Tools (v2.1 · Supabase cloud)
+# ShowCrew GearVault — ShowCrew Tools (v2.2 · Supabase cloud)
 
 Track computer / show gear (Millumin, PowerPoint & Keynote rigs, rack PCs, audio, network, cables, cases) with photos and receipts,
 group it into kits / road cases, and build the **ATA Carnet General List** for travel abroad.
@@ -12,7 +12,7 @@ Live: https://don-duckworth.github.io/showcrew-gearvault/ (GitHub Pages, `main` 
 ## Status of Don's project
 
 Project **ShowCrew GearVault** (ref `ggtkglxvuxvmuqtpvlgs`, us-east-2). Steps 1, 2 and 7 below are **done**: the schema is applied
-(migrations `init_gearvault` + `init_gearvault_advisor_fixes`, and for v2.1 `electromaxx_no` + `electromaxx_trip_toggle` = `0002_electromaxx.sql`) and `js/config.js` holds the project URL and the `sb_publishable_…` key.
+(migrations `init_gearvault` + `init_gearvault_advisor_fixes`, for v2.1 `electromaxx_no` + `electromaxx_trip_toggle` = `0002_electromaxx.sql`, and for v2.2 `parts_parent_child` = `0003_parts.sql`) and `js/config.js` holds the project URL and the `sb_publishable_…` key.
 Still to do in the dashboard (steps 3–6):
 
 - URL configuration (Site URL + Redirect URLs): https://supabase.com/dashboard/project/ggtkglxvuxvmuqtpvlgs/auth/url-configuration
@@ -27,7 +27,8 @@ Still to do in the dashboard (steps 3–6):
 2. **Create the tables, security rules and file bucket** — Dashboard → *SQL Editor* → *New query* → paste all of
    [`supabase/migrations/0001_init.sql`](supabase/migrations/0001_init.sql) → *Run*. It's safe to run again.
    It creates the tables, Row Level Security, and the private Storage bucket **`gear-files`** (no need to create the bucket by hand).
-   Then do the same with [`supabase/migrations/0002_electromaxx.sql`](supabase/migrations/0002_electromaxx.sql) (v2.1 Electromaxx gear number; also safe to re-run).
+   Then do the same with [`supabase/migrations/0002_electromaxx.sql`](supabase/migrations/0002_electromaxx.sql) (v2.1 Electromaxx gear number) and
+   [`supabase/migrations/0003_parts.sql`](supabase/migrations/0003_parts.sql) (v2.2 parts & accessories) — both safe to re-run.
 3. **Point auth at the app** — *Authentication → URL Configuration*:
    - **Site URL**: `https://don-duckworth.github.io/showcrew-gearvault/`
    - **Redirect URLs**: add `https://don-duckworth.github.io/showcrew-gearvault/` (and `http://localhost:8766/` if you test locally).
@@ -90,6 +91,27 @@ which only matters for password resets. Free-plan projects pause after a week of
   - *CSV*: inventory export has an **`Electromaxx #`** column; import also accepts `Electromaxx No`, `Electromaxx Number`, `electromaxx_no`, `EMX`,
     `EMX #`, `Asset tag`, `Gear #`, `Barcode`… Excel drops leading zeros (`4217`) — import pads them back to `004217`. Invalid or duplicate numbers are
     skipped (the item is still imported) and counted in the import message. JSON backup/restore and the v1 upload carry the field too.
+- **Parts & accessories (v2.2)** — gear can contain gear (`js/parts.js`). In the DB: `items.parent_id` (composite FK `(owner_id, parent_id)` →
+  `items(owner_id, id)`, so a part can only belong to *your* item; `on delete set null`), `items.part_type` = `installed` | `accessory`, a trigger that
+  rejects cycles (A part of B part of A), and `trips.fold_parts`.
+  - *Item editor*: **Contents & accessories** lists the parts (type, Electromaxx #, serial, value, total incl. parts). **＋ Add part** asks *Installed
+    inside* or *Separate accessory* and opens a new item prefilled with the parent's category, vendor, purchase date, country (and currency); saving
+    returns you to the parent. **⛓ Link existing gear** is a searchable picker (never offers the item itself or anything it is part of). ⛓✕ unlinks.
+    A part's editor shows **Part of: <parent>** (tap to open it), its part type and **Unlink**. Adding a part / linking on a brand-new item saves it first.
+  - *Deleting a parent* asks: **delete it and its parts**, or **keep the parts as standalone gear** (only its direct parts are unlinked).
+  - *Gear list*: parts are nested (indented) under their parent; the magenta **N parts** badge collapses/expands them. With a search or filter the list
+    is flat and parts carry a **↳ part of X** tag. Each item is counted once in the totals; a parent also shows its value **incl. parts** (info only).
+  - *Scan*: scanning a part's Electromaxx # opens the part and shows its parent.
+  - *Kits / trips*: adding a parent brings all its parts (any depth) along; counts include them. Any part line can still be left off one trip (✕),
+    and leaving off a parent leaves off the parts that came with it.
+  - *Carnet*: an **accessory** is its own numbered line ("accessory to item 1") and counts as pieces. **Installed** parts are sub-lines **1a, 1b…**
+    with description, serial, value and origin — no pieces, weight "incl." in the parent, value in the totals. Per-trip switch **Fold installed parts
+    into parent line** adds their value to the parent line and appends "— incl. installed: … S/N …" to its description. Missing serial / value / origin
+    checks cover parts (installed parts aren't asked for a weight). Print/PDF and CSV follow the same layout.
+  - *CSV*: inventory export/import has **Parent Electromaxx #**, **Parent serial**, **Part type** (`installed` / `accessory`; also "Installed inside",
+    "Separate accessory"). Import links rows after all rows are in (a part may come before its parent), by Parent Electromaxx #, else Parent serial;
+    unknown parents are counted in the message and the item is imported standalone. Empty parent cells don't unlink an existing part.
+    JSON backup/restore and the v1 upload carry `parentId` / `partType` / `foldParts`.
 - **Barcode scanning** (`js/scan.js`, `js/emx.js`)
   - Uses the browser's native **`BarcodeDetector`** where it exists (Chrome/Edge on Android, ChromeOS, macOS). Otherwise (iPhone/iPad Safari, Firefox,
     desktop Chrome on Windows/Linux) it loads the vendored **ZXing** decoder (`js/vendor/zxing.min.js`, @zxing/library 0.23.0, Apache-2.0 — no CDN;
@@ -108,14 +130,20 @@ which only matters for password resets. Free-plan projects pause after a week of
 
 ## Tests
 
-- `node tools/test-carnet.mjs` — carnet/CSV logic + cloud row mapping (round-trip, diff, deterministic v1→UUID ids).
+- `node tools/test-carnet.mjs` — carnet/CSV logic + cloud row mapping (round-trip, diff, deterministic v1→UUID ids), and v2.2 parts: tree helpers,
+  cycle/dangling cleanup, sub-line numbering, pieces/value/weight totals, fold, exclusions, CSV parent columns, parents-first upsert order.
 - `GV_URL=http://127.0.0.1:8766/ node tools/browser-test.mjs` — headless desktop / iPad / iPhone run (needs playwright and a local server).
   Uses an in-browser **fake Supabase client** (`tools/fake-supabase.js`, injected through `window.__GV_TEST_SUPABASE__`) that simulates auth, TOTP
   (code `246810`), owner-only + aal2 RLS and storage — no real project needed. Writes `screenshots/`.
 - Browser test section *1b* covers the Electromaxx field: validation/duplicates, CSV aliases, carnet toggle, decoding every barcode fixture from a
   photo, a **live scan through Chromium's fake camera** (a y4m video built from `tools/fixtures/camera-004222.png`) with ZXing, and a mocked native
   `BarcodeDetector`. Fixtures are made with `tools/make-barcodes.py` (needs `python-barcode`, `qrcode`, `pillow`).
+- Browser test section *1c* covers parts: add part (prefill), link picker (excludes self/ancestors), Part of / unlink, nested list + totals,
+  collapse, search tag, scanning a part, kit/trip inclusion and exclusion, carnet sub-lines / accessory lines / fold on screen, print and CSV, inventory
+  CSV parent columns, backup + restore, both delete-parent choices. The fake client mirrors the parent FK, cycle check and `on delete set null`.
 - `tools/test-sql.sh` — runs the migrations twice (idempotency) against a local Postgres with small Supabase stubs (`supabase/tests/local-stub.sql`)
   and then `supabase/tests/rls-test.sql` (25 checks: aal1 gets nothing, cross-user isolation, forged owner_id, foreign folders in storage, cross-owner links, anon…), then `supabase/tests/electromaxx-test.sql`
-  (10 checks: 6-digit format, NULL allowed, unique per owner on insert/update, other owners may reuse a number, `show_emx` default).
+  (10 checks: 6-digit format, NULL allowed, unique per owner on insert/update, other owners may reuse a number, `show_emx` default), then
+  `supabase/tests/parts-test.sql` (15 checks: part_type values, no self-parent, no cycles, cross-owner parents rejected, delete parent → parent_id NULL,
+  roots-first multi-row upserts, `fold_parts` default, aal1/other users can't relink).
 - Icons: `node tools/make-icons.mjs` (needs playwright).
