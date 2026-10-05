@@ -82,6 +82,7 @@ const dl = async (page, trigger) => { const [d] = await Promise.all([page.waitFo
 const hideToast = async page => { await page.evaluate(() => document.getElementById('toast').classList.remove('show')); await page.waitForTimeout(250); };
 const shot = async (page, name, o = {}) => { await hideToast(page); await page.screenshot({ path: OUT + name, ...o }); };
 const noOverflow = page => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1);
+const __parseCSV = t => { t = t.replace(/^\uFEFF/, ''); const rows = []; let row = [], c = '', q = false; for (let i = 0; i < t.length; i++) { const ch = t[i]; if (q) { if (ch === '"') { if (t[i + 1] === '"') { c += '"'; i++; } else q = false; } else c += ch; } else if (ch === '"') q = true; else if (ch === ',') { row.push(c); c = ''; } else if (ch === '\n' || ch === '\r') { if (ch === '\r' && t[i + 1] === '\n') i++; row.push(c); rows.push(row); row = []; c = ''; } else c += ch; } if (c || row.length) { row.push(c); rows.push(row); } return rows; };
 const fdb = page => page.evaluate(() => { __fakeSb.reload(); return __fakeSb.db.tables; });
 
 // ======================= 0. not configured =======================
@@ -463,6 +464,155 @@ ok(await page.evaluate(() => !window.ZXing), 'vendored ZXing is only loaded when
 ok((await page.inputValue('.overlay [data-f=name]')) === 'SAMPLE Show laptop A', 'native scan result → item opened');
 ok(errs.length === 0, 'no console errors (native) ' + JSON.stringify(errs));
 await ctx.close();
+
+// ======================= 1c. v2.2 parts & accessories (parent/child) =======================
+{
+({ ctx, page, errs } = await newCtx({ width: 1366, height: 900 }));
+await login(page);
+const idOf = n => page.evaluate(n => __gv.S.items.find(i => i.name === n)?.id, n);
+const openRow = async n => { await page.click(`#gearList .gear[data-id="${await idOf(n)}"] .g-name`); await page.waitForSelector('.overlay [data-f=name]'); };
+const pickChoice = async v => { await page.waitForSelector(`.overlay [data-r="${v}"]`); await page.click(`.overlay [data-r="${v}"]`); };
+const editorFor = n => page.waitForFunction(n => window.__gv.ui.edit?.d.name === n && document.querySelector('.overlay [data-f=name]')?.value === n, n);
+await addItem(page, { name: 'SAMPLE Playback PC', category: 'Rack-mount PC', make: 'SampleCorp', model: '2U', serial: 'SAMPLE-PC-001', emx: '004300', price: '5000', vendor: 'SAMPLE Store', purchaseDate: '2026-01-15', origin: 'Taiwan', weight: '18' });
+await addItem(page, { name: 'SAMPLE Remote', serial: 'SAMPLE-REM-09', price: '20', origin: 'China', weight: '0.1' });
+await addItem(page, { name: 'SAMPLE Laptop', serial: 'SAMPLE-LAP-05', price: '3000', origin: 'China', weight: '2' });
+const PC = await idOf('SAMPLE Playback PC');
+// + Add part (installed) — prefilled from the parent
+await openRow('SAMPLE Playback PC');
+ok(await page.locator('#partsSection .lbl', { hasText: 'Contents & accessories' }).count() === 1, 'editor has a "Contents & accessories" section');
+await page.click('.overlay [data-act=addPart]'); await pickChoice('installed');
+await page.waitForFunction(() => window.__gv.ui.edit?.isNew && window.__gv.ui.edit.d.parentId);
+const pre = await page.evaluate(() => { const d = __gv.ui.edit.d; return [d.category, d.vendor, d.purchaseDate, d.origin, d.partType].join('|'); });
+ok(pre === 'Rack-mount PC|SAMPLE Store|2026-01-15|Taiwan|installed', '+ Add part prefills category / vendor / purchase date / country, type installed: ' + pre);
+ok((await page.locator('.overlay #partOfStrip').innerText()).includes('SAMPLE Playback PC'), 'new part editor shows "Part of: <parent>"');
+await fillItem(page, { name: 'SAMPLE GPU', make: 'NVIDIA', model: 'RTX A4000', serial: 'SAMPLE-GPU-01', emx: '004217', price: '1000', origin: 'China' });
+await page.click('.overlay [data-act=saveItem]'); await editorFor('SAMPLE Playback PC'); await settled(page);
+ok((await page.locator('.overlay #partsBox .partrow').count()) === 1 && (await page.locator('.overlay #partsBox').innerText()).includes('SAMPLE-GPU-01'), 'saving the part returns to the parent editor, part listed with serial');
+await page.click('.overlay [data-act=addPart]'); await pickChoice('installed'); await page.waitForFunction(() => window.__gv.ui.edit?.isNew);
+await fillItem(page, { name: 'SAMPLE Capture card', make: 'Blackmagic Design', model: 'DeckLink Duo 2', serial: 'SAMPLE-DL-02', price: '500', origin: '' });
+await page.click('.overlay [data-act=saveItem]'); await editorFor('SAMPLE Playback PC');
+await page.click('.overlay [data-act=addPart]'); await pickChoice('accessory'); await page.waitForFunction(() => window.__gv.ui.edit?.isNew);
+await fillItem(page, { name: 'SAMPLE Spare PSU', serial: 'SAMPLE-PSU-03', emx: '004302', price: '150', weight: '2' });
+await page.click('.overlay [data-act=saveItem]'); await editorFor('SAMPLE Playback PC'); await settled(page);
+// Link existing gear (searchable picker, excludes self)
+await page.click('.overlay [data-act=linkPart]'); await page.waitForSelector('#linkList');
+const cand = await page.locator('#linkList .pick').allInnerTexts();
+ok(!cand.some(t => t.includes('SAMPLE Playback PC')) && !cand.some(t => t.includes('SAMPLE GPU')) && cand.some(t => t.includes('SAMPLE Remote')), 'link picker excludes self and existing parts: ' + cand.length);
+await page.fill('.overlay [data-pickfilter]', 'remote');
+ok((await page.locator('#linkList .pick:visible').count()) === 1, 'link picker search filters');
+await page.selectOption('#linkType', 'accessory'); await page.click('#linkList .pick:visible'); await settled(page);
+ok((await page.locator('.overlay #partsBox .partrow').count()) === 4, 'linked existing gear appears in the parts list');
+let T = await fdb(page);
+const row = n => T.items.find(r => r.name === n);
+ok(row('SAMPLE GPU').parent_id === PC && row('SAMPLE GPU').part_type === 'installed' && row('SAMPLE Spare PSU').part_type === 'accessory' && row('SAMPLE Remote').parent_id === PC && row('SAMPLE Laptop').parent_id == null, 'cloud rows: parent_id + part_type saved');
+await page.locator('#partsSection').scrollIntoViewIfNeeded();
+await shot(page, 'desktop-item-editor-parts.png');
+// child editor: Part of + link + unlink; picker from the child excludes its ancestors
+await page.locator('.overlay #partsBox [data-act=openPart]', { hasText: 'SAMPLE GPU' }).click(); await editorFor('SAMPLE GPU');
+ok((await page.locator('.overlay #partOfStrip [data-act=openParent]').innerText()) === 'SAMPLE Playback PC' && (await page.locator('.overlay #partOfStrip [data-act=unlinkSelf]').count()) === 1, 'child editor: "Part of: SAMPLE Playback PC" with link + Unlink');
+await page.click('.overlay [data-act=linkPart]'); await page.waitForSelector('#linkList');
+ok(!(await page.locator('#linkList .pick').allInnerTexts()).some(t => t.includes('SAMPLE Playback PC')), 'link picker on a part excludes its ancestors (no cycles)');
+await page.click('.overlay:last-child [data-act=closeTop]');
+await page.click('.overlay [data-act=unlinkSelf]');
+ok((await page.locator('.overlay #partOfStrip').count()) === 0, 'Unlink clears "Part of" (applies on Save)');
+await page.click('.overlay [data-act=cancelEdit]'); await editorFor('SAMPLE Playback PC');
+ok(await page.evaluate(() => __gv.S.items.find(i => i.name === 'SAMPLE GPU').parentId) === PC, 'cancel keeps the link; closing the part returns to the parent');
+await page.locator('.overlay #partsBox [data-act=openPart]', { hasText: 'SAMPLE GPU' }).click(); await editorFor('SAMPLE GPU');
+await page.click('.overlay [data-act=openParent]'); await editorFor('SAMPLE Playback PC');
+ok(true, 'Part of link opens the parent');
+await page.click('.overlay [data-act=cancelEdit]'); await page.waitForFunction(() => !document.querySelector('.overlay'));
+// gear list: nested under parent, part count, incl. parts, no double count
+ok((await page.locator(`#gearList .gkids[data-parent="${PC}"] > .gear`).count()) === 4, 'gear list nests the 4 parts under the parent');
+ok((await page.locator(`#gearList .gear[data-id="${PC}"] .partcount`).innerText()).includes('4 parts'), 'parent row shows part count');
+ok((await page.locator(`#gearList .gear[data-id="${PC}"] .inclparts`).innerText()).includes('$6,670.00'), 'parent row shows value incl. parts ($6,670)');
+ok((await page.locator('#gearList .listfoot').innerText()).includes('$9,670.00'), 'list total counts each item once ($9,670): ' + await page.locator('#gearList .listfoot').innerText());
+ok((await page.locator('#dash').innerText()).includes('$9,670'), 'dashboard total does not double-count parts');
+await shot(page, 'desktop-gear-list-parts.png');
+await page.click(`#gearList .gear[data-id="${PC}"] .partcount`);
+ok((await page.locator(`#gearList .gkids[data-parent="${PC}"]`).count()) === 0 && !(await page.locator('.overlay').count()), 'part count toggles collapse (without opening the editor)');
+await page.click(`#gearList .gear[data-id="${PC}"] .partcount`);
+await page.fill('#q', 'capture');
+ok((await page.locator('#gearList .gear').count()) === 1 && (await page.locator('#gearList .partof').innerText()).includes('part of SAMPLE Playback PC'), 'search result shows the child with a "part of X" tag');
+await page.fill('#q', '');
+// scan a child's Electromaxx # → opens the child and shows its parent
+await scanPhoto(page, 'code128-004217.png'); await noScanner(page); await editorFor('SAMPLE GPU');
+ok((await page.locator('.overlay #partOfStrip').innerText()).includes('SAMPLE Playback PC') && /part of SAMPLE Playback PC/.test(await toastText(page)), 'scanning a part opens it and shows its parent');
+await page.click('.overlay [data-act=cancelEdit]'); await page.waitForFunction(() => !document.querySelector('.overlay'));
+// kit with the parent → includes descendants
+await page.click('#nav [data-view=kits]'); await page.click('[data-act=newKit]'); await page.fill('#kName', 'SAMPLE Rack P');
+ok((await page.locator('.overlay .pick', { hasText: 'SAMPLE Playback PC' }).innerText()).includes('+4 parts included'), 'kit picker says parts are included');
+await page.locator('.overlay .pick', { hasText: 'SAMPLE Playback PC' }).click(); await page.click('.overlay [data-act=saveKit]'); await settled(page);
+ok((await page.locator('.kcard', { hasText: 'SAMPLE Rack P' }).innerText()).includes('5 items'), 'kit card counts the parent + its 4 parts');
+// trip / carnet
+await page.click('#nav [data-view=trips]'); await page.click('[data-act=newTrip]');
+await page.fill('[data-tf=name]', 'SAMPLE Parts trip'); await page.press('[data-tf=name]', 'Tab');
+await page.locator('[data-act=toggleTripKit]', { hasText: 'SAMPLE Rack P' }).click();
+await page.click('[data-act=pickTripItems]'); await page.locator('.overlay .pick', { hasText: 'SAMPLE Laptop' }).click(); await page.click('.overlay [data-act=saveTripItems]'); await settled(page);
+const nos = await page.locator('#tripLines tbody td.no').allInnerTexts();
+ok(nos.join() === '1,1a,1b,2,3,4', 'carnet: installed parts = sub-lines 1a/1b, accessories own lines: ' + nos.join());
+const stat = await page.locator('#tripLines .hud-stat').innerText();
+ok(/Pieces\s*4\b/.test(stat) && stat.includes('$9,670'), 'carnet totals: 4 pieces (installed parts are not pieces), value incl. parts: ' + stat.replace(/\s+/g, ' '));
+ok((await page.locator('#carnetIssues').innerText()).includes('missing country of origin') && (await page.locator('#tripLines tr.subline', { hasText: 'Capture' }).locator('.flag').count()) > 0, 'missing-data check flags the installed part');
+ok((await page.locator('#tripLines tr', { hasText: 'Spare PSU' }).innerText()).includes('accessory to item 1'), 'accessory line references its parent line');
+await page.locator('#tripLines tr', { hasText: 'Capture card' }).locator('[data-act=excludeLine]').click(); await settled(page);
+ok((await page.locator('#tripLines tbody td.no').allInnerTexts()).join() === '1,1a,2,3,4', 'a part line can be left off a trip');
+T = await fdb(page); ok(T.trip_items.some(r => r.mode === 'exclude' && r.item_id === row('SAMPLE Capture card').id), 'part exclusion saved (trip_items exclude)');
+await page.click('[data-act=restoreLine]'); await settled(page);
+await page.click('#view [data-act=previewCarnet]'); await page.waitForSelector('#printRoot.show .paper');
+ok((await page.locator('.paper tbody tr.subline').count()) === 2 && (await page.locator('.paper tbody tr', { hasText: 'Spare PSU' }).innerText()).includes('accessory to item 1'), 'print: sub-lines + accessory line');
+await page.emulateMedia({ media: 'print' }); await page.setViewportSize({ width: 1100, height: 850 });
+await shot(page, 'carnet-print-parts.png', { fullPage: true });
+await page.pdf({ path: OUT + 'carnet-general-list-parts-sample.pdf', format: 'Letter', landscape: true, printBackground: true });
+await page.emulateMedia({ media: 'screen' }); await page.setViewportSize({ width: 1366, height: 900 });
+await page.click('.paperbar [data-act=closePaper]');
+await page.click('#view [data-act=csvCarnet]');
+let pcsv = fs.readFileSync(await dl(page, () => page.click('.overlay [data-r="1"]')), 'utf8');
+ok(/\r\n1a,.*installed in item 1.*,SAMPLE-GPU-01,,,1000\.00,China/.test(pcsv) && /TOTAL,,4,.*,9670\.00/.test(pcsv), 'general list CSV: sub-line 1a (no pieces) + totals');
+// fold switch
+await page.check('[data-tf=foldParts]'); await settled(page);
+const fnos = await page.locator('#tripLines tbody td.no').allInnerTexts();
+const l1 = await page.locator('#tripLines tbody tr').first().innerText();
+ok(fnos.join() === '1,2,3,4' && l1.includes('incl. installed') && l1.includes('SAMPLE-GPU-01') && l1.includes('6,500.00'), 'fold: installed parts folded into line 1 (serials appended, value 6,500)');
+T = await fdb(page); ok(T.trips.find(t => t.name === 'SAMPLE Parts trip').fold_parts === true, 'trips.fold_parts saved');
+await page.click('#view [data-act=previewCarnet]'); await page.waitForSelector('#printRoot.show .paper');
+ok((await page.locator('.paper tbody tr.subline').count()) === 0 && (await page.locator('.paper tbody tr').first().innerText()).includes('SAMPLE-DL-02'), 'print honors fold');
+await page.click('.paperbar [data-act=closePaper]');
+await page.click('#view [data-act=csvCarnet]');
+pcsv = fs.readFileSync(await dl(page, () => page.click('.overlay [data-r="1"]')), 'utf8');
+ok(!/\r\n1a,/.test(pcsv) && pcsv.includes('incl. installed') && /TOTAL,,4,.*,9670\.00/.test(pcsv), 'CSV honors fold');
+await page.uncheck('[data-tf=foldParts]'); await settled(page);
+// inventory CSV export / import with parent columns
+await page.click('#nav [data-view=gear]');
+const inv = fs.readFileSync(await dl(page, () => page.click('#view [data-act=exportInvCSV]')), 'utf8');
+const invRows = __parseCSV(inv), ih = invRows[0];
+const gpuRow = invRows.find(r => r[ih.indexOf('name')] === 'SAMPLE GPU');
+ok(ih.includes('Parent Electromaxx #') && ih.includes('Parent serial') && ih.includes('Part type') && gpuRow[ih.indexOf('Parent Electromaxx #')] === '004300' && gpuRow[ih.indexOf('Parent serial')] === 'SAMPLE-PC-001' && gpuRow[ih.indexOf('Part type')] === 'installed', 'inventory CSV: Parent Electromaxx # / Parent serial / Part type');
+fs.writeFileSync(TMP + 'parts.csv', 'name,serial,current_value,country_of_origin,Parent Electromaxx #,Parent serial,Part type\r\nSAMPLE PSU cable,SAMPLE-CBL-1,10,China,,SAMPLE-PSU-03,accessory\r\nSAMPLE RAM kit,SAMPLE-RAM-7,300,Taiwan,4300,,Installed inside\r\nSAMPLE Orphan,SAMPLE-ORP,5,China,999999,,accessory\r\n');
+await page.click('#nav [data-view=data]'); await page.setInputFiles('#view input[data-import=csv]', TMP + 'parts.csv'); await settled(page);
+T = await fdb(page);
+ok(row('SAMPLE RAM kit').parent_id === PC && row('SAMPLE RAM kit').part_type === 'installed' && row('SAMPLE PSU cable').parent_id === row('SAMPLE Spare PSU').id && row('SAMPLE Orphan').parent_id == null, 'CSV import links parts by Parent Electromaxx # / Parent serial');
+ok(/2 linked as parts/.test(await toastText(page)) && /1 parent\(s\) not found/.test(await toastText(page)), 'CSV import message: ' + await toastText(page));
+// JSON backup includes the fields
+const bk = JSON.parse(fs.readFileSync(await dl(page, () => page.click('[data-act=exportBackup]')), 'utf8'));
+ok(bk.data.items.find(i => i.name === 'SAMPLE GPU').parentId === PC && bk.data.items.find(i => i.name === 'SAMPLE GPU').partType === 'installed' && bk.data.trips[0].foldParts === false, 'JSON backup carries parentId / partType / foldParts');
+// delete a parent: delete parts too
+await page.click('#nav [data-view=gear]');
+await openRow('SAMPLE Spare PSU'); await page.click('.overlay [data-act=deleteItem]'); await pickChoice('all'); await settled(page);
+T = await fdb(page); ok(!row('SAMPLE Spare PSU') && !row('SAMPLE PSU cable'), 'delete parent → "delete parts too" removes its parts');
+// restore the backup (replace) → links come back
+await page.click('#nav [data-view=data]'); fs.writeFileSync(TMP + 'parts-backup.json', JSON.stringify(bk));
+await page.setInputFiles('#view input[data-import=backup]', TMP + 'parts-backup.json'); await pickChoice('replace'); await settled(page);
+T = await fdb(page); ok(row('SAMPLE PSU cable')?.parent_id === row('SAMPLE Spare PSU')?.id && row('SAMPLE GPU').parent_id === PC, 'restore backup brings parts + links back');
+// delete a parent: keep parts standalone
+await page.click('#nav [data-view=gear]');
+await openRow('SAMPLE Playback PC'); await page.click('.overlay [data-act=deleteItem]'); await pickChoice('keep'); await settled(page);
+T = await fdb(page);
+ok(!row('SAMPLE Playback PC') && row('SAMPLE GPU') && row('SAMPLE GPU').parent_id == null && row('SAMPLE Spare PSU').parent_id == null && row('SAMPLE PSU cable').parent_id === row('SAMPLE Spare PSU').id, 'delete parent → "keep standalone" unlinks direct parts only');
+await page.setViewportSize({ width: 390, height: 844 }); await page.waitForTimeout(150);
+ok(await noOverflow(page), 'iPhone width: nested gear list does not overflow');
+ok(errs.length === 0, 'no console errors (parts) ' + JSON.stringify(errs));
+await ctx.close();
+}
 
 // ======================= 2. v1 on-device data → cloud upload offer =======================
 ({ ctx, page, errs } = await newCtx({ width: 1180, height: 820 }, { ctxOpts: { hasTouch: true } }));

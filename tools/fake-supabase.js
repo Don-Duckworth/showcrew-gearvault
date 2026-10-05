@@ -65,6 +65,12 @@
             if (!/^[0-9]{6}$/.test(r.electromaxx_no)) return { data: null, error: err('new row for relation "items" violates check constraint "items_electromaxx_no_format"', '23514') };
             if (tbl.some(x => x.owner_id === uid && x.id !== r.id && x.electromaxx_no === r.electromaxx_no)) return { data: null, error: err('duplicate key value violates unique constraint "items_owner_electromaxx_uidx"', '23505') };
           }
+          if (this.t === 'items' && r.parent_id != null) { // mirrors 0003_parts.sql: composite FK (same owner), not self, no cycles, part_type check
+            if (r.parent_id === r.id) return { data: null, error: err('new row for relation "items" violates check constraint "items_parent_not_self"', '23514') };
+            if (!tbl.some(p => p.id === r.parent_id && p.owner_id === uid)) return { data: null, error: err('insert or update on table "items" violates foreign key constraint "items_parent_fk"', '23503') };
+            for (let cur = r.parent_id, hops = 0; cur; hops++) { if (cur === r.id || hops > 64) return { data: null, error: err(`GearVault: item ${r.id} cannot be a part of its own part (cycle)`, '23514') }; cur = (tbl.find(x => x.id === cur && x.owner_id === uid) || {}).parent_id || null; }
+          }
+          if (this.t === 'items' && r.part_type != null && !['installed', 'accessory'].includes(r.part_type)) return { data: null, error: err('new row for relation "items" violates check constraint "items_part_type_check"', '23514') };
           const k = kv(this.t, r, this.conflict), ix = tbl.findIndex(x => kv(this.t, x, this.conflict) === k);
           if (ix >= 0) { if (tbl[ix].owner_id !== uid) return { data: null, error: err('new row violates row-level security policy', '42501') }; tbl[ix] = { ...tbl[ix], ...r, updated_at: now }; }
           else tbl.push({ created_at: now, updated_at: now, ...r });
@@ -75,7 +81,9 @@
         const del = tbl.filter(r => r.owner_id === uid && this.filters.every(f => f(r)));
         const ids = new Set(del.map(r => r.id).filter(Boolean));
         db.tables[this.t] = tbl.filter(r => !del.includes(r));
-        cascade(this.t, ids); save(db); return { data: null, error: null };
+        cascade(this.t, ids);
+        if (this.t === 'items') for (const r of db.tables.items) if (ids.has(r.parent_id)) r.parent_id = null; // on delete set null (parent_id)
+        save(db); return { data: null, error: null };
       }
     }
   }
