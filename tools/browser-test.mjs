@@ -505,7 +505,7 @@ ok((await page.locator('.overlay #partsBox .partrow').count()) === 4, 'linked ex
 let T = await fdb(page);
 const row = n => T.items.find(r => r.name === n);
 ok(row('SAMPLE GPU').parent_id === PC && row('SAMPLE GPU').part_type === 'installed' && row('SAMPLE Spare PSU').part_type === 'accessory' && row('SAMPLE Remote').parent_id === PC && row('SAMPLE Laptop').parent_id == null, 'cloud rows: parent_id + part_type saved');
-await page.locator('#partsSection').scrollIntoViewIfNeeded();
+await page.evaluate(() => document.getElementById('partsSection').scrollIntoView({ block: 'start' }));
 await shot(page, 'desktop-item-editor-parts.png');
 // child editor: Part of + link + unlink; picker from the child excludes its ancestors
 await page.locator('.overlay #partsBox [data-act=openPart]', { hasText: 'SAMPLE GPU' }).click(); await editorFor('SAMPLE GPU');
