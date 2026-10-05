@@ -781,13 +781,13 @@ const ACTIONS = {
   linkPick: el => {
     const o = el.closest('.overlay'), pid = o._pid, c = itemById(el.dataset.id), type = $('#linkType', o)?.value || 'accessory';
     if (!c || P.wouldCycle(S.items, c.id, pid)) return toast('That would make an item a part of its own part');
-    Object.assign(c, { parentId: pid, partType: type, updated: Date.now() }); persist(); closeLayer(o, true); renderParts();
+    Object.assign(c, { parentId: pid, partType: type, updated: Date.now() }); persist(); closeLayer(o, true); render(); renderParts();
     toast(`Linked “${itemTitle(c)}” as ${type === 'installed' ? 'installed part' : 'accessory'}`);
   },
   unlinkPart: async el => {
     const c = itemById(el.dataset.id); if (!c) return;
     if (!(await confirmBox(`Unlink “${itemTitle(c)}”?`, 'Unlink', '<p class="hint">It stays in your gear as a standalone item.</p>', 'primary'))) return;
-    Object.assign(c, { parentId: '', partType: '', updated: Date.now() }); persist(); renderParts(); toast('Unlinked — now standalone gear');
+    Object.assign(c, { parentId: '', partType: '', updated: Date.now() }); persist(); render(); renderParts(); toast('Unlinked — now standalone gear');
   },
   unlinkSelf: () => { if (!ui.edit) return; Object.assign(ui.edit.d, { parentId: '', partType: '' }); renderPartOf(); toast('Unlinked — Save to keep it standalone', 2400); },
   openPart: el => { const pid = ui.edit?.d.id, id = el.dataset.id; if (!commitEdit()) return; const it = itemById(id); if (it) openItemEditor(it, false, { returnTo: pid }); },
