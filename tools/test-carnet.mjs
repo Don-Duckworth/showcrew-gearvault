@@ -147,9 +147,9 @@ ok(pf.lines.length === 4 && !pf.lines.some(l => l.sub) && pl.value === 6700 && p
 ok(/incl\. installed: .*S\/N SAMPLE-GPU1.*S\/N SAMPLE-NV1.*S\/N SAMPLE-DL2/.test(pl.description), 'fold: part serials appended to the description: ' + pl.description);
 ok(pf.totals.value === 10020 && pf.totals.pieces === 5 && pl.issues.some(x => x.k === 'origin' && /Capture/.test(x.msg)), 'fold: same totals; part issues flagged on the parent line');
 const pcsv = C.generalListCSV(pg, PT), prow = C.parseCSV(pcsv);
-const r1a = prow.find(r => r[0] === '1a'), r2 = prow.find(r => r[0] === '2');
+const r1a = prow.find(r => r[0] === '1a'), rr2 = prow.find(r => r[0] === "2");
 ok(r1a && r1a[1].includes('installed in item 1') && r1a[2] === 'SAMPLE-GPU1' && r1a[3] === '' && r1a[5] === '1000.00' && r1a[6] === 'China', 'general list CSV: sub-line 1a with serial, value, origin, no pieces');
-ok(r2 && r2[1].includes('accessory to item 1') && r2[3] === '2', 'general list CSV: accessory has its own line + pieces');
+ok(rr2 && rr2[1].includes('accessory to item 1') && rr2[3] === "2", 'general list CSV: accessory has its own line + pieces');
 ok(prow.some(r => r[1] === 'TOTAL' && r[3] === '5' && r[5] === '10020.00'), 'general list CSV: totals');
 const pinv = C.inventoryCSV(PS.items), head = pinv.split('\r\n')[0];
 ok(head.endsWith('Parent Electromaxx #,Parent serial,Part type'), 'inventory CSV: parent columns');
