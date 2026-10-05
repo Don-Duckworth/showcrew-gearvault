@@ -266,14 +266,16 @@ function renderGearList() {
 }
 
 // ----- item editor -----
-function openItemEditor(item, isNew = false) {
+function openItemEditor(item, isNew = false, { returnTo = null } = {}) {
   const d = { ...item, atts: item.atts.map(a => ({ ...a })), tagsText: item.tags.join(', ') };
-  ui.edit = { d, isNew, newAtts: [], pendingDel: [], kits: new Set(kitsOf(item.id).map(k => k.id)) };
+  ui.edit = { d, isNew, newAtts: [], pendingDel: [], kits: new Set(kitsOf(item.id).map(k => k.id)), returnTo };
+  ui.edit.orig = editSig(ui.edit);
   const st = S.settings, cats = [...new Set([...st.categories, d.category])];
   const f = (key, label, attrs = '', cls = '') => `<label class="fld ${cls}"><span>${label}</span><input class="inp" data-f="${key}" value="${esc(d[key] ?? '')}" ${attrs}></label>`;
   const need = key => (String(d[key] ?? '').trim() ? '' : 'need');
   const o = openLayer(`
     <div class="sheet-h"><div class="title">${isNew ? '＋ ADD GEAR' : 'EDIT GEAR'}</div><button class="iconbtn" data-act="cancelEdit" aria-label="Close">✕</button></div>
+    <div id="partOfBox"></div>
     <div class="section"><div class="lbl">Item</div><div class="grid4">
       ${f('name', 'Name / description *', 'placeholder="e.g. Show laptop A" autocomplete="off"', 'span2')}
       <label class="fld span2"><span>Category</span><select class="inp" data-f="category">${cats.map(c => `<option ${c === d.category ? 'selected' : ''}>${esc(c)}</option>`).join('')}</select></label>
@@ -300,15 +302,64 @@ function openItemEditor(item, isNew = false) {
       <label class="btn sm">📷 Add photo<input type="file" accept="image/*" multiple data-attkind="photo"></label>
       <label class="btn sm">🧾 Add receipt<input type="file" accept="image/*,application/pdf" multiple data-attkind="receipt"></label></div></div>
       <div id="attsBox"></div></div>
+    <div class="section" id="partsSection"><div class="row between wrap"><div class="lbl">Contents &amp; accessories</div><div class="row wrap">
+      <button class="btn sm" data-act="addPart">＋ Add part</button><button class="btn sm ghost" data-act="linkPart">⛓ Link existing gear</button></div></div>
+      <div id="partsBox" class="partsbox"></div></div>
     <div class="section"><div class="lbl">Kits / road cases</div><div class="chips" id="kitChips">${S.kits.length ? S.kits.map(k => `<button class="chip ${ui.edit.kits.has(k.id) ? 'on' : ''}" data-act="toggleEditKit" data-id="${k.id}">▣ ${esc(k.name)}</button>`).join('') : '<span class="hint">No kits yet — create road cases in the Kits tab.</span>'}</div></div>
     <div class="section"><div class="lbl">Tags &amp; notes</div>
       <label class="fld"><span>Tags (comma separated)</span><input class="inp" data-f="tagsText" value="${esc(d.tagsText)}" placeholder="millumin, playback, spare" autocomplete="off"></label>
       <label class="fld"><span>Notes</span><textarea class="inp" data-f="notes" placeholder="Specs, warranty, AppleCare, what's installed…">${esc(d.notes)}</textarea></label></div>
     ${dataLists()}
     <div class="sheet-f">${isNew ? '' : '<button class="btn danger" data-act="deleteItem">Delete</button><button class="btn ghost" data-act="dupItem">Duplicate</button>'}<span class="grow"></span><button class="btn ghost" data-act="cancelEdit">Cancel</button><button class="btn primary" data-act="saveItem">Save</button></div>`,
-  { cls: 'wide', backdrop: false, onClose: () => discardEdit() });
-  renderAtts(); emxHint();
+  { cls: 'wide', backdrop: false, onClose: () => { const rt = ui.edit?.returnTo; discardEdit(); if (rt) reopenItem(rt); } });
+  renderAtts(); emxHint(); renderPartOf(); renderParts();
   if (isNew && !d.emx) $('[data-f=name]', o)?.focus({ preventScroll: true });
+}
+// ----- parts (v2.2) -----
+const editSig = E => JSON.stringify([E.d, [...E.kits].sort(), E.newAtts, E.pendingDel]);
+const editDirty = () => !!ui.edit && (ui.edit.isNew || editSig(ui.edit) !== ui.edit.orig);
+function reopenItem(id) { const it = itemById(id); if (it) setTimeout(() => { if (!ui.edit) openItemEditor(it); }, 0); }
+/** Leave the open editor so another one can open: saves it when it has changes (or is new). Returns false if saving was blocked. */
+function commitEdit() {
+  if (!ui.edit) return true;
+  ui.edit.returnTo = null;
+  if (editDirty()) return !!saveEdit();
+  closeLayer(); return true;
+}
+function renderPartOf() {
+  const box = $('#partOfBox'); if (!box || !ui.edit) return;
+  const d = ui.edit.d, par = d.parentId && itemById(d.parentId);
+  if (!par) { box.innerHTML = ''; return; }
+  const chain = P.ancestors(S.items, d.id).slice(1).map(itemTitle);
+  box.innerHTML = `<div class="partof-strip" id="partOfStrip"><span class="lbl" style="margin:0">Part of:</span>
+    <button class="lnk" data-act="openParent" data-id="${par.id}">${esc(itemTitle(par))}</button>${par.emx ? `<span class="emxtag">${EMX_GLYPH}${esc(par.emx)}</span>` : ''}
+    ${chain.length ? `<span class="hint">in ${esc(chain.join(' › '))}</span>` : ''}<span class="grow"></span>
+    <select class="inp" data-f="partType" aria-label="Part type" style="width:auto">${P.PART_TYPES.map(([k, l]) => `<option value="${k}" ${P.partTypeOf(d) === k ? 'selected' : ''}>${l}</option>`).join('')}</select>
+    <button class="btn sm ghost" data-act="unlinkSelf">Unlink</button></div>`;
+}
+function renderParts() {
+  const box = $('#partsBox'); if (!box || !ui.edit) return;
+  const d = ui.edit.d, kids = P.childrenOf(S.items, d.id);
+  if (!kids.length) { box.innerHTML = `<p class="hint">No parts yet. Add what's <b>installed inside</b> (GPU, capture card, drives — carnet sub-lines) or <b>separate accessories</b> that travel with it (PSU, remote, cables — their own carnet lines).</p>`; return; }
+  const vw = P.valueWithParts(S.items, d.id, C.unitValue), nDesc = P.descendants(S.items, d.id).length;
+  box.innerHTML = kids.map(c => { const v = C.unitValue(c), sub = P.descendants(S.items, c.id).length, pt = P.partTypeOf(c);
+    return `<div class="partrow" data-part="${c.id}"><span class="pt ${pt}">${PT_LABEL[pt]}</span>
+      <button class="pn" data-act="openPart" data-id="${c.id}">${esc(itemTitle(c))}${sub ? ` <span class="hint">+${plural(sub, 'part')}</span>` : ''}<small>${c.serial ? 'S/N ' + esc(c.serial) : '<span style="color:var(--amber)">no serial</span>'}</small></button>
+      <span class="pe">${c.emx ? `<span class="emxtag">${EMX_GLYPH}${esc(c.emx)}</span>` : '<span class="hint">no EMX #</span>'}</span>
+      <span class="pv">${v == null ? '<span style="color:var(--amber)">—</span>' : money(v * (c.qty || 1), c.currency)}</span>
+      <button class="iconbtn" data-act="unlinkPart" data-id="${c.id}" aria-label="Unlink ${esc(itemTitle(c))}" title="Unlink (keep as standalone gear)">⛓✕</button></div>`; }).join('')
+    + `<p class="hint">${plural(nDesc, 'part')} · value incl. parts <b>${money(vw.value, vw.currency)}</b>${vw.other ? ` (+${vw.other} in another currency)` : ''}</p>`;
+}
+function openLinkPicker(pid) {
+  const self = itemById(pid); if (!self) return;
+  const cands = S.items.filter(i => i.parentId !== pid && !P.wouldCycle(S.items, i.id, pid)).sort((a, b) => itemTitle(a).localeCompare(itemTitle(b)));
+  const o = openLayer(`<div class="sheet-h"><div class="title">LINK GEAR TO ${esc(itemTitle(self).toUpperCase())}</div><button class="iconbtn" data-act="closeTop" aria-label="Close">✕</button></div>
+    <div class="row wrap"><label class="fld grow"><span>Link as</span><select class="inp" id="linkType">${P.PART_TYPES.map(([k, l]) => `<option value="${k}">${l}</option>`).join('')}</select></label></div>
+    ${cands.length ? `<div class="search"><input class="inp" type="search" data-pickfilter placeholder="Search ${cands.length} items (name, serial, Electromaxx #)…" autocomplete="off"></div>
+    <div class="picker" id="linkList">${cands.map(i => { const par = parentOf(i); return `<button class="pick" data-act="linkPick" data-id="${i.id}" data-s="${esc([itemTitle(i), i.make, i.model, i.serial, i.emx, i.category].join(' ').toLowerCase())}">
+      <span class="pn">${esc(itemTitle(i))}<small>${esc([i.emx && '#' + i.emx, i.serial].filter(Boolean).join(' · '))}</small></span><span class="pv">${par ? `now part of ${esc(itemTitle(par))}` : esc(i.category)}</span></button>`; }).join('')}</div>`
+    : '<p class="hint">No other gear can be linked here (an item can\'t be a part of its own part).</p>'}`, { cls: 'wide' });
+  o._pid = pid; $('[data-pickfilter]', o)?.focus({ preventScroll: true });
 }
 function dataLists() {
   const uniq = k => [...new Set(S.items.map(i => i[k]).filter(Boolean))].sort();
@@ -356,6 +407,7 @@ function saveEdit() {
   const ep = emxProblem(d);
   if (ep === 'format') { toast('Electromaxx # must be exactly 6 digits (or leave it empty)', 2600); $('[data-f=emx]')?.focus(); return; }
   if (ep === 'dup') { const other = Emx.emxOwners(S.items, d.emx, d.id)[0]; toast(`Electromaxx # ${d.emx} is already on “${itemTitle(other)}”`, 3000); $('[data-f=emx]')?.focus(); return; }
+  if (d.parentId && (!itemById(d.parentId) || P.wouldCycle(S.items, d.id, d.parentId))) d.parentId = '';
   const item = Store.sanitizeItem({ ...d, tags: Store.splitTags(d.tagsText), updated: Date.now() }, S.settings);
   delete item.tagsText;
   const ix = S.items.findIndex(i => i.id === item.id);
@@ -369,7 +421,9 @@ function saveEdit() {
   const orphan = (E.removed || []).filter(a => E.newAtts.includes(a.id)); if (orphan.length) cloud.removeFiles(orphan.flatMap(a => [a.path, a.thumb]).filter(Boolean));
   for (const id of E.pendingDel) urlCache.delete(id);
   ui.edit = null; persist(); closeLayer(undefined, true); render();
-  toast(E.isNew ? `Added “${itemTitle(item)}”` : 'Saved');
+  toast(E.isNew ? `Added “${itemTitle(item)}”${item.parentId ? ` to ${itemTitle(itemById(item.parentId))}` : ''}` : 'Saved');
+  if (E.returnTo) reopenItem(E.returnTo);
+  return item;
 }
 
 // ----- kits -----
@@ -647,7 +701,7 @@ async function scanToFind() {
   const r = await Scan.scan({ title: 'FIND GEAR BY STICKER' }); if (!r) return;
   const hits = S.items.filter(i => i.emx === r.emx);
   ui.view = 'gear'; ui.tripId = null; Object.assign(ui, { q: r.emx, fCat: '', fStatus: '', fTag: '' }); render();
-  if (hits.length === 1) { openItemEditor(hits[0]); toast(`Electromaxx # ${r.emx} → ${itemTitle(hits[0])}`, 2200); return; }
+  if (hits.length === 1) { const par = parentOf(hits[0]); openItemEditor(hits[0]); toast(`Electromaxx # ${r.emx} → ${itemTitle(hits[0])}${par ? ` (part of ${itemTitle(par)})` : ''}`, 2600); return; }
   if (readOnly()) return toast(`No gear with Electromaxx # ${r.emx}`, 2600);
   const ch = await choose(`No gear with Electromaxx # ${r.emx}`, `<p class="hint">Nothing in your inventory has this sticker number yet.</p>`,
     [['new', `＋ Add new gear with # ${esc(r.emx)}`, 'primary'], ['assign', 'Put it on existing gear…']]);
@@ -655,7 +709,7 @@ async function scanToFind() {
   else if (ch === 'assign') { Object.assign(ui, { q: '', fStatus: 'emx:none' }); render(); toast(`Tap the item, then enter ${r.emx} (or Scan) in its Electromaxx # field`, 3500); ui.pendingEmx = r.emx; }
 }
 // Actions that change data — blocked while offline / read-only.
-const MUTATING = new Set(['newItem', 'saveItem', 'dupItem', 'deleteItem', 'removeAtt', 'newKit', 'saveKit', 'deleteKit', 'newTrip', 'deleteTrip', 'toggleTripKit',
+const MUTATING = new Set(['newItem', 'saveItem', 'dupItem', 'deleteItem', 'addPart', 'linkPart', 'linkPick', 'unlinkPart', 'unlinkSelf', 'removeAtt', 'newKit', 'saveKit', 'deleteKit', 'newTrip', 'deleteTrip', 'toggleTripKit',
   'pickTripItems', 'saveTripItems', 'removeTripItem', 'excludeLine', 'restoreLine', 'addCategory', 'delCategory', 'eraseAll', 'uploadLegacy']);
 
 const ACTIONS = {
@@ -681,14 +735,51 @@ const ACTIONS = {
   saveItem: () => saveEdit(),
   dupItem: () => { const src = ui.edit.d; closeLayer(); const it = Store.sanitizeItem({ ...src, tags: Store.splitTags(src.tagsText), id: Store.uid('itm'), serial: '', emx: '', atts: [], name: (src.name || '') + ' (copy)', created: Date.now() }, S.settings); openItemEditor(it, true); toast('Copy — enter its serial number and Electromaxx #'); },
   deleteItem: async () => {
-    const d = ui.edit.d; if (!(await confirmBox(`Delete “${itemTitle(d)}”?`, 'Delete', '<p class="hint">Its photos and receipts are deleted too. It is removed from kits and trips.</p>'))) return;
+    const d = ui.edit.d, desc = P.descendants(S.items, d.id); let gone = new Set([d.id]); let kept = 0;
+    if (desc.length) {
+      const ch = await choose(`Delete “${itemTitle(d)}”?`, `<p class="hint">It has ${plural(desc.length, 'part')}: ${esc(desc.slice(0, 6).map(itemTitle).join(', '))}${desc.length > 6 ? '…' : ''}. Photos and receipts of whatever you delete go too; it is removed from kits and trips.</p>`,
+        [['all', `Delete it and its ${plural(desc.length, 'part')}`, 'danger'], ['keep', 'Delete it, keep the parts as standalone gear', 'primary']]);
+      if (!ch) return;
+      if (ch === 'all') gone = new Set([d.id, ...desc.map(x => x.id)]);
+      else S.items.forEach(i => { if (i.parentId === d.id) { i.parentId = ''; i.partType = ''; i.updated = Date.now(); kept++; } });
+    } else if (!(await confirmBox(`Delete “${itemTitle(d)}”?`, 'Delete', '<p class="hint">Its photos and receipts are deleted too. It is removed from kits and trips.</p>'))) return;
     const unsavedAtts = d.atts.concat(ui.edit.removed || []).filter(a => ui.edit.newAtts.includes(a.id));
     cloud.removeFiles(unsavedAtts.flatMap(a => [a.path, a.thumb]).filter(Boolean)); // saved files go with the sync
-    S.items = S.items.filter(i => i.id !== d.id);
-    S.kits.forEach(k => { k.itemIds = k.itemIds.filter(x => x !== d.id); });
-    S.trips.forEach(t => { t.itemIds = t.itemIds.filter(x => x !== d.id); t.excluded = t.excluded.filter(x => x !== d.id); });
-    ui.edit = null; closeLayer(undefined, true); persist(); render(); toast('Deleted');
+    S.items = S.items.filter(i => !gone.has(i.id));
+    S.kits.forEach(k => { k.itemIds = k.itemIds.filter(x => !gone.has(x)); });
+    S.trips.forEach(t => { t.itemIds = t.itemIds.filter(x => !gone.has(x)); t.excluded = t.excluded.filter(x => !gone.has(x)); });
+    ui.edit.returnTo = null; ui.edit = null; closeLayer(undefined, true); persist(); render(); toast(gone.size > 1 ? `Deleted ${plural(gone.size, 'item')}` : kept ? `Deleted — ${plural(kept, 'part')} kept as standalone gear` : 'Deleted');
   },
+  addPart: async () => {
+    const E = ui.edit; if (!E) return;
+    const type = await choose('Add a part', `<p class="hint">A new item is created as part of “${esc(itemTitle(E.d))}”, prefilled with its category, vendor, purchase date and country of origin.</p>`,
+      [['installed', '⧉ Installed inside <small>— carnet sub-line, not an extra piece</small>', 'primary'], ['accessory', '＋ Separate accessory <small>— its own carnet line</small>']]);
+    if (!type || !ui.edit) return;
+    const pid = E.d.id; if (!commitEdit()) return;
+    const par = itemById(pid); if (!par) return;
+    const it = Store.makeItem(S.settings);
+    Object.assign(it, { category: par.category, vendor: par.vendor, purchaseDate: par.purchaseDate, origin: par.origin, currency: par.currency, weightUnit: par.weightUnit, parentId: pid, partType: type });
+    openItemEditor(it, true, { returnTo: pid });
+  },
+  linkPart: () => {
+    const E = ui.edit; if (!E) return; const pid = E.d.id;
+    if (E.isNew) { if (!commitEdit()) return; const it = itemById(pid); if (!it) return; openItemEditor(it); }
+    openLinkPicker(pid);
+  },
+  linkPick: el => {
+    const o = el.closest('.overlay'), pid = o._pid, c = itemById(el.dataset.id), type = $('#linkType', o)?.value || 'accessory';
+    if (!c || P.wouldCycle(S.items, c.id, pid)) return toast('That would make an item a part of its own part');
+    Object.assign(c, { parentId: pid, partType: type, updated: Date.now() }); persist(); closeLayer(o, true); renderParts();
+    toast(`Linked “${itemTitle(c)}” as ${type === 'installed' ? 'installed part' : 'accessory'}`);
+  },
+  unlinkPart: async el => {
+    const c = itemById(el.dataset.id); if (!c) return;
+    if (!(await confirmBox(`Unlink “${itemTitle(c)}”?`, 'Unlink', '<p class="hint">It stays in your gear as a standalone item.</p>', 'primary'))) return;
+    Object.assign(c, { parentId: '', partType: '', updated: Date.now() }); persist(); renderParts(); toast('Unlinked — now standalone gear');
+  },
+  unlinkSelf: () => { if (!ui.edit) return; Object.assign(ui.edit.d, { parentId: '', partType: '' }); renderPartOf(); toast('Unlinked — Save to keep it standalone', 2400); },
+  openPart: el => { const pid = ui.edit?.d.id, id = el.dataset.id; if (!commitEdit()) return; const it = itemById(id); if (it) openItemEditor(it, false, { returnTo: pid }); },
+  openParent: el => { const id = el.dataset.id; if (!commitEdit()) return; const it = itemById(id); if (it) openItemEditor(it); },
   toggleParts: el => { const id = el.dataset.id; ui.collapsed.has(id) ? ui.collapsed.delete(id) : ui.collapsed.add(id); renderGearList(); },
   toggleEditKit: el => { const s = ui.edit.kits, id = el.dataset.id; s.has(id) ? s.delete(id) : s.add(id); el.classList.toggle('on', s.has(id)); },
   viewAtt: (el, e) => { if (e.target.closest('.x')) return; const a = ui.edit?.d.atts.find(x => x.id === el.dataset.id); if (a) viewAtt(a); },

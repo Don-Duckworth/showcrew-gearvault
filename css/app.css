@@ -341,7 +341,7 @@ body.readonly #addBtn, body.readonly [data-act=newItem], body.readonly [data-act
 }
 
 /* ---------- v2.2 parts & accessories ---------- */
-.gear.child { margin-left: calc(var(--depth, 1) * 22px); border-left: 2px solid rgba(255, 61, 242, .45); }
+.gear.child { margin-left: calc(var(--depth, 1) * 22px); width: calc(100% - var(--depth, 1) * 22px); border-left: 2px solid rgba(255, 61, 242, .45); }
 .gkids { display: flex; flex-direction: column; gap: inherit; }
 .g-parts { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; margin-top: 3px; }
 .partcount { display: inline-flex; align-items: center; gap: 4px; min-height: 22px; padding: 0 8px; border-radius: 11px; font: 700 11px var(--mono); color: var(--mag); border: 1px solid rgba(255, 61, 242, .45); background: rgba(255, 61, 242, .08); cursor: pointer; white-space: nowrap; }
@@ -362,4 +362,4 @@ body.readonly #addBtn, body.readonly [data-act=newItem], body.readonly [data-act
 .paper tr.subline td { background: #fafafa; font-size: 8.8pt; }
 .paper tr.subline td.d { padding-left: 20px; }
 .paper .subnote { font-size: 7.5pt; color: #555; font-style: italic; }
-@media (max-width: 640px) { .gear.child { margin-left: calc(var(--depth, 1) * 12px); } .partrow { grid-template-columns: 1fr auto auto; } .partrow .pt, .partrow .pe { display: none; } }
+@media (max-width: 640px) { .gear.child { margin-left: calc(var(--depth, 1) * 12px); width: calc(100% - var(--depth, 1) * 12px); } .partrow { grid-template-columns: 1fr auto auto; } .partrow .pt, .partrow .pe { display: none; } }
