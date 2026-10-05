@@ -428,8 +428,8 @@ function saveEdit() {
 
 // ----- kits -----
 function kitStats(k) {
-  const items = k.itemIds.map(id => S.items.find(i => i.id === id)).filter(Boolean), cur = S.settings.currency;
-  return { items, pieces: items.reduce((a, i) => a + (i.qty || 1), 0), value: items.reduce((a, i) => a + ((i.currency || cur) === cur ? (C.unitValue(i) || 0) * (i.qty || 1) : 0), 0),
+  const items = C.kitItems(S, k), cur = S.settings.currency; // includes every part of every item in the kit
+  return { items, direct: k.itemIds.filter(id => itemById(id)).length, pieces: items.reduce((a, i) => a + (i.qty || 1), 0), value: items.reduce((a, i) => a + ((i.currency || cur) === cur ? (C.unitValue(i) || 0) * (i.qty || 1) : 0), 0),
     kg: items.reduce((a, i) => a + (C.toKg(i.weight, i.weightUnit) || 0) * (i.qty || 1), 0), missing: items.filter(i => carnetErrs(i).length).length };
 }
 function kitsViewHTML() {
@@ -438,7 +438,7 @@ function kitsViewHTML() {
   <p class="hint">Group gear into the cases and bags you actually travel with (e.g. “Rack A”, “Laptop bag”). A trip can then pull in whole kits at once. Add the case itself as a gear item if it should appear on the carnet.</p>
   ${S.kits.length ? `<div class="cards">${S.kits.map(k => { const s = kitStats(k); return `<button class="kcard" data-act="editKit" data-id="${k.id}">
     <span class="k-type">${esc(k.type)}</span><span class="k-name">${esc(k.name)}</span>
-    <span class="k-stats"><span>${plural(s.items.length, 'item')}</span><span>${s.pieces} pcs</span><span>${money(s.value, cur, false)}</span><span>${fmtW(s.kg, wu)}</span></span>
+    <span class="k-stats"><span>${plural(s.items.length, 'item')}${s.items.length > s.direct ? ` <small>(${s.items.length - s.direct} parts)</small>` : ''}</span><span>${s.pieces} pcs</span><span>${money(s.value, cur, false)}</span><span>${fmtW(s.kg, wu)}</span></span>
     <span class="k-list">${s.items.length ? s.items.map(i => esc(itemTitle(i))).join(' · ') : 'Empty — tap to add gear'}</span>
     ${s.missing ? `<span class="flag">⚠ ${s.missing} missing carnet data</span>` : s.items.length ? '<span class="flag ok">✓ carnet data complete</span>' : ''}</button>`; }).join('')}</div>`
     : `<div class="empty" style="padding:30px">${EMPTY_GLYPH}<p>No kits yet. Typical setups: <b>Rack A</b>, <b>Laptop bag</b>, <b>Audio case</b>, <b>Network kit</b>.</p><button class="btn primary" data-act="newKit">＋ Create first kit</button></div>`}`;
@@ -448,7 +448,7 @@ function pickerHTML(selected, listName) {
   if (!items.length) return '<p class="hint">No gear yet — add items in the Gear tab first.</p>';
   return `<div class="search"><input class="inp" type="search" data-pickfilter placeholder="Filter ${items.length} items…" autocomplete="off"></div>
   <div class="picker" data-list="${listName}">${items.map(i => `<label class="pick ${selected.has(i.id) ? 'on' : ''}" data-s="${esc([itemTitle(i), i.make, i.model, i.serial, i.category, ...i.tags].join(' ').toLowerCase())}">
-    <input type="checkbox" value="${i.id}" ${selected.has(i.id) ? 'checked' : ''}><span class="pn">${esc(itemTitle(i))}<small>${esc(i.serial || '')}</small></span><span class="pv">${esc(i.category)}${inService(i) ? '' : ' · ' + i.status}</span></label>`).join('')}</div>`;
+    <input type="checkbox" value="${i.id}" ${selected.has(i.id) ? 'checked' : ''}><span class="pn">${esc(itemTitle(i))}<small>${esc(i.serial || '')}${(n => (n ? ` · +${plural(n, 'part')} included` : ''))(P.descendants(S.items, i.id).length)}${parentOf(i) ? ` · part of ${esc(itemTitle(parentOf(i)))}` : ''}</small></span><span class="pv">${esc(i.category)}${inService(i) ? '' : ' · ' + i.status}</span></label>`).join('')}</div>`;
 }
 function openKitEditor(kit, isNew) {
   const o = openLayer(`<div class="sheet-h"><div class="title">${isNew ? '＋ NEW KIT' : 'EDIT KIT'}</div><button class="iconbtn" data-act="closeTop" aria-label="Close">✕</button></div>
@@ -492,9 +492,10 @@ function tripViewHTML() {
         <label class="fld"><span>Weight unit</span><select class="inp" data-tf="weightUnit"><option value="kg" ${t.weightUnit === 'kg' ? 'selected' : ''}>kg</option><option value="lb" ${t.weightUnit === 'lb' ? 'selected' : ''}>lb</option></select></label></div>
         <label class="tgl"><input type="checkbox" data-tf="serialInDesc" ${t.serialInDesc ? 'checked' : ''}> Also put serial numbers in the description</label>
         <label class="tgl"><input type="checkbox" data-tf="emxCol" ${t.emxCol ? 'checked' : ''}> Add an “Electromaxx #” column (internal asset tag) to the general list &amp; CSV</label>
+        <label class="tgl"><input type="checkbox" data-tf="foldParts" ${t.foldParts ? 'checked' : ''}> Fold installed parts into parent line (adds their value, appends their serials to the description)</label>
       </div>
       <div class="card"><div class="row between"><div class="lbl">Kits on this trip</div><span class="hint">tap to toggle</span></div>
-        <div class="chips">${S.kits.length ? S.kits.map(k => `<button class="chip ${t.kitIds.includes(k.id) ? 'on' : ''}" data-act="toggleTripKit" data-id="${k.id}">▣ ${esc(k.name)} <small>${k.itemIds.length}</small></button>`).join('') : '<span class="hint">No kits yet — make them in the Kits tab, or add items individually.</span>'}</div></div>
+        <div class="chips">${S.kits.length ? S.kits.map(k => `<button class="chip ${t.kitIds.includes(k.id) ? 'on' : ''}" data-act="toggleTripKit" data-id="${k.id}">▣ ${esc(k.name)} <small>${C.kitItems(S, k).length}</small></button>`).join('') : '<span class="hint">No kits yet — make them in the Kits tab, or add items individually.</span>'}</div></div>
       <div class="card"><div class="row between"><div class="lbl">Individual items</div><button class="btn sm" data-act="pickTripItems">＋ Add items</button></div>
         ${indiv.length ? `<div class="col">${indiv.map(i => `<div class="row between"><span class="grow" style="min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(itemTitle(i))}</span><button class="iconbtn" data-act="removeTripItem" data-id="${i.id}" aria-label="Remove">✕</button></div>`).join('')}</div>` : '<p class="hint">Gear not in a kit (e.g. a laptop in your backpack).</p>'}</div>
     </div>
@@ -506,16 +507,16 @@ function tripLinesHTML() {
   const t = trip(), gl = C.buildGeneralList(S, t), cur = gl.currency;
   const excl = (t.excluded || []).map(id => S.items.find(i => i.id === id)).filter(Boolean);
   const c = gl.counts, parts = [c.serial && `${c.serial} missing serial`, c.value && `${c.value} missing value`, c.origin && `${c.origin} missing country of origin`, c.currency && `${c.currency} in another currency`].filter(Boolean);
-  return `<div class="hud-stat"><div><div class="lbl">Lines</div><div class="big">${gl.totals.lines}</div></div><div><div class="lbl">Pieces</div><div class="big">${gl.totals.pieces}</div></div>
+  return `<div class="hud-stat"><div><div class="lbl">Lines</div><div class="big">${gl.totals.lines}${gl.totals.subLines ? `<span style="font-size:13px"> +${gl.totals.subLines} sub</span>` : ''}</div></div><div><div class="lbl">Pieces</div><div class="big">${gl.totals.pieces}</div></div>
     <div><div class="lbl">Weight</div><div class="big">${num2(gl.totals.weight)}<span style="font-size:13px"> ${gl.weightUnit}</span></div></div><div><div class="lbl">Value</div><div class="big">${money(gl.totals.value, cur, false)}</div></div></div>
   ${gl.totals.errors ? `<p class="note amber" id="carnetIssues">⚠ <b>${plural(gl.totals.errors, 'line')} need attention before export:</b> ${esc(parts.join(', '))}. Tap <b>Fix</b> on a row to edit the item.</p>`
     : gl.totals.lines ? '<p class="note" id="carnetIssues">✓ Every line has a serial number, value and country of origin.</p>' : ''}
   <p class="hint">Value column = <b>current value</b> if set on the item, otherwise purchase price, × pieces, in ${esc(cur)}. Customs expects current fair market value.</p>
   ${gl.lines.length ? `<div class="tablewrap"><table class="ro carnet"><thead><tr><th class="n">#</th><th>Trade description</th><th>Serial</th>${t.emxCol ? '<th>EMX #</th>' : ''}<th class="n">Pcs</th><th class="n">Wt ${gl.weightUnit}</th><th class="n">Value</th><th>Origin</th><th></th></tr></thead><tbody>
-    ${gl.lines.map(l => { const errs = l.issues.filter(x => x.level === 'err'); return `<tr class="${errs.length ? 'bad' : ''}">
-      <td class="n no">${l.no}</td><td class="desc">${esc(l.description)}${l.kit ? `<div class="kitname">▣ ${esc(l.kit)}</div>` : ''}${l.issues.length ? `<div class="issues">${l.issues.map(x => `<span class="flag ${x.level === 'err' ? '' : 'warn'}">${esc(issueLabel(x))}</span>`).join('')}</div>` : ''}</td>
-      <td class="mono" data-l="S/N">${esc(l.serial) || '—'}</td>${t.emxCol ? `<td class="mono emxc" data-l="EMX #">${esc(l.emx) || '—'}</td>` : ''}<td class="n" data-l="Pcs">${l.pieces}</td><td class="n" data-l="${gl.weightUnit}">${num2(l.weight)}</td><td class="n" data-l="${esc(cur)}">${l.value == null ? '—' : num2(l.value)}${l.currency !== cur ? ` <small>${esc(l.currency)}</small>` : ''}</td><td data-l="Origin">${esc(l.origin) || '—'}</td>
-      <td class="act" style="white-space:nowrap">${errs.length ? `<button class="btn sm" data-act="editItem" data-id="${l.itemId}">Fix</button>` : `<button class="iconbtn" data-act="editItem" data-id="${l.itemId}" aria-label="Edit">✎</button>`}<button class="iconbtn" data-act="excludeLine" data-id="${l.itemId}" aria-label="Leave off this trip" title="Leave off this trip">✕</button></td></tr>`; }).join('')}
+    ${gl.lines.map(l => { const errs = l.issues.filter(x => x.level === 'err'); return `<tr class="${errs.length ? 'bad' : ''} ${l.sub ? 'subline' : ''}" data-no="${l.no}">
+      <td class="n no">${l.no}</td><td class="desc">${esc(l.description)}${l.sub ? `<div class="subnote">installed in item ${l.hostNo} — not an extra piece</div>` : l.note ? `<div class="subnote">${esc(l.note)}</div>` : ''}${l.kit && !l.sub ? `<div class="kitname">▣ ${esc(l.kit)}</div>` : ''}${l.issues.length ? `<div class="issues">${l.issues.map(x => `<span class="flag ${x.level === 'err' ? '' : 'warn'}">${esc(issueLabel(x))}</span>`).join('')}</div>` : ''}</td>
+      <td class="mono" data-l="S/N">${esc(l.serial) || '—'}</td>${t.emxCol ? `<td class="mono emxc" data-l="EMX #">${esc(l.emx) || '—'}</td>` : ''}<td class="n" data-l="Pcs">${l.sub ? '—' : l.pieces}</td><td class="n" data-l="${gl.weightUnit}">${l.sub ? '—' : num2(l.weight)}</td><td class="n" data-l="${esc(cur)}">${l.value == null ? '—' : num2(l.value)}${l.currency !== cur ? ` <small>${esc(l.currency)}</small>` : ''}</td><td data-l="Origin">${esc(l.origin) || '—'}</td>
+      <td class="act" style="white-space:nowrap">${errs.length ? `<button class="btn sm" data-act="editItem" data-id="${errs.every(x => x.part) ? errs[0].part : l.itemId}">Fix</button>` : `<button class="iconbtn" data-act="editItem" data-id="${l.itemId}" aria-label="Edit">✎</button>`}<button class="iconbtn" data-act="excludeLine" data-id="${l.itemId}" aria-label="Leave off this trip" title="Leave off this trip">✕</button></td></tr>`; }).join('')}
     </tbody><tfoot><tr><td class="no"></td><td class="desc">TOTAL</td><td class="mono"></td>${t.emxCol ? '<td class="mono hide-m"></td>' : ''}<td class="n" data-l="Pcs">${gl.totals.pieces}</td><td class="n" data-l="${gl.weightUnit}">${num2(gl.totals.weight)}</td><td class="n" data-l="${esc(cur)}">${num2(gl.totals.value)}</td><td colspan="2" class="hide-m">${esc(cur)}</td></tr></tfoot></table></div>`
     : '<div class="empty" style="padding:24px"><p>Pick kits or add individual items to build the general list.</p></div>'}
   ${excl.length ? `<div class="card"><div class="lbl">Left off this trip</div><div class="chips">${excl.map(i => `<button class="chip" data-act="restoreLine" data-id="${i.id}">↺ ${esc(itemTitle(i))}</button>`).join('')}</div></div>` : ''}`;
@@ -530,9 +531,9 @@ function paperHTML(t) {
     <div class="ph"><div><h1>GENERAL LIST</h1><div class="sm">ATA Carnet — list of goods for temporary admission · ${esc(t.purpose || 'Professional equipment')}</div></div>
       <div class="sm" style="text-align:right">Carnet No.: <b>${esc(t.carnetNo) || '____________________'}</b><br>Holder: <b>${esc(t.holder) || '____________________'}</b></div></div>
     <div class="meta"><div><b>Trip / event</b>${esc(t.name)}</div><div><b>Destination country(ies)</b>${esc(t.destinations) || '—'}</div><div><b>Dates of travel</b>${esc([t.depart, t.ret].filter(Boolean).join(' to ')) || '—'}</div>
-      <div><b>Currency of values</b>${esc(cur)} — current fair market value</div><div><b>Weight unit</b>${gl.weightUnit === 'lb' ? 'pounds (lb)' : 'kilograms (kg)'}</div><div><b>Total</b>${gl.totals.lines} lines · ${gl.totals.pieces} pieces</div></div>
+      <div><b>Currency of values</b>${esc(cur)} — current fair market value</div><div><b>Weight unit</b>${gl.weightUnit === 'lb' ? 'pounds (lb)' : 'kilograms (kg)'}</div><div><b>Total</b>${gl.totals.lines} lines${gl.totals.subLines ? ` (+${gl.totals.subLines} installed-part sub-lines)` : ''} · ${gl.totals.pieces} pieces</div></div>
     <table><thead><tr><th class="c" style="width:5%">Item No.</th><th style="width:${t.emxCol ? 30 : 37}%">Trade description of goods (make, model, description)</th><th style="width:${t.emxCol ? 15 : 17}%">Serial number</th>${t.emxCol ? '<th style="width:9%">Electromaxx #</th>' : ''}<th class="c" style="width:7%">No. of pieces</th><th class="n" style="width:9%">Weight (${gl.weightUnit})</th><th class="n" style="width:12%">Value (${esc(cur)})</th><th style="width:13%">Country of origin</th></tr></thead>
-    <tbody>${gl.lines.map(l => { const m = k => (l.issues.some(x => x.k === k && x.level === 'err') ? ' miss' : ''); return `<tr><td class="c">${l.no}</td><td>${esc(l.description)}</td><td class="sn${m('serial')}">${esc(l.serial) || '—'}</td>${t.emxCol ? `<td class="sn">${esc(l.emx) || '—'}</td>` : ''}<td class="c">${l.pieces}</td><td class="n">${l.weight == null ? '—' : num2(l.weight)}</td><td class="n${m('value')}${m('currency')}">${l.value == null ? '—' : num2(l.value)}${l.currency !== cur ? ' ' + esc(l.currency) : ''}</td><td class="${m('origin').trim()}">${esc(l.origin) || '—'}</td></tr>`; }).join('')}</tbody>
+    <tbody>${gl.lines.map(l => { const m = k => (l.issues.some(x => x.k === k && x.level === 'err') ? ' miss' : ''); return `<tr class="${l.sub ? 'subline' : ''}"><td class="c">${l.no}</td><td class="d">${esc(l.description)}${l.sub ? `<div class="subnote">installed in item ${l.hostNo} (not an additional piece)</div>` : l.note ? `<div class="subnote">${esc(l.note)}</div>` : ''}</td><td class="sn${m('serial')}">${esc(l.serial) || '—'}</td>${t.emxCol ? `<td class="sn">${esc(l.emx) || '—'}</td>` : ''}<td class="c">${l.sub ? '—' : l.pieces}</td><td class="n">${l.sub ? 'incl.' : l.weight == null ? '—' : num2(l.weight)}</td><td class="n${m('value')}${m('currency')}">${l.value == null ? '—' : num2(l.value)}${l.currency !== cur ? ' ' + esc(l.currency) : ''}</td><td class="${m('origin').trim()}">${esc(l.origin) || '—'}</td></tr>`; }).join('')}</tbody>
     <tfoot><tr><td></td><td>GRAND TOTAL</td><td></td>${t.emxCol ? '<td></td>' : ''}<td class="c">${gl.totals.pieces}</td><td class="n">${num2(gl.totals.weight)}</td><td class="n">${num2(gl.totals.value)}</td><td>${esc(cur)}</td></tr></tfoot></table>
     <div class="foot"><div>Values stated are current fair market values in ${esc(cur)}. Serial numbers are as marked on the goods. All goods are professional equipment for use by the holder and will be re-exported.<br>Prepared ${esc(today())} with ShowCrew GearVault.</div><div class="sig">Holder / authorized representative — signature &amp; date</div></div>
   </div>`;
@@ -580,7 +581,7 @@ function dataViewHTML() {
       <p class="hint">${plural(S.items.length, 'item')} · ${plural(S.kits.length, 'kit')} · ${plural(S.trips.length, 'trip')} · ${plural(nAtt, 'file')}</p>
       <div class="row wrap"><button class="btn primary" data-act="exportBackup">⤓ Export backup</button><label class="btn">⤒ Restore backup<input type="file" accept=".json,application/json" data-import="backup"></label></div></div>
     <div class="card"><div class="lbl">Inventory spreadsheet (CSV)</div>
-      <p class="hint">Opens in Excel / Numbers / Google Sheets. Import matches rows by <b>id</b> (updates) or adds new items. Recognized headers include name, category, make, model, serial, Electromaxx # (also “asset tag”, “EMX”), qty, purchase_price, current_value, currency, vendor, country_of_origin, weight, weight_unit, status, tags, notes.</p>
+      <p class="hint">Opens in Excel / Numbers / Google Sheets. Import matches rows by <b>id</b> (updates) or adds new items. Recognized headers include name, category, make, model, serial, Electromaxx # (also “asset tag”, “EMX”), qty, purchase_price, current_value, currency, vendor, country_of_origin, weight, weight_unit, status, tags, notes, and for parts <b>Parent Electromaxx #</b>, <b>Parent serial</b>, <b>Part type</b> (installed / accessory).</p>
       <div class="row wrap"><button class="btn" data-act="exportInvCSV">⤓ Export CSV</button><label class="btn">⤒ Import CSV<input type="file" accept=".csv,text/csv" data-import="csv"></label><button class="btn ghost" data-act="csvTemplate">Template</button></div></div>
     <div class="card"><div class="lbl">Defaults</div><div class="grid2">
       <label class="fld"><span>Currency</span><select class="inp" data-set="currency">${[...new Set([st.currency, ...Store.CURRENCIES])].map(c => `<option ${c === st.currency ? 'selected' : ''}>${c}</option>`).join('')}</select></label>
@@ -647,6 +648,7 @@ async function bringIn(st, getBlob, mode = 'merge') {
     const up = (arr, x) => { const ix = arr.findIndex(y => y.id === x.id); if (ix >= 0) arr[ix] = x; else arr.push(x); };
     st.items.forEach(x => up(S.items, x)); st.kits.forEach(x => up(S.kits, x)); st.trips.forEach(x => up(S.trips, x));
     S.settings.categories = [...new Set([...S.settings.categories, ...st.settings.categories])];
+    P.fixParents(S.items); // no dangling / cyclic parent links after a merge
     const dups = Emx.dedupeEmx(S.items); // cloud allows each Electromaxx # once
     if (dups.length) setTimeout(() => toast(`${dups.length} duplicate Electromaxx # cleared: ${dups.map(d => d.emx).join(', ')}`, 4500), 2700);
   }
@@ -657,18 +659,28 @@ async function bringIn(st, getBlob, mode = 'merge') {
 async function importCSV(file) {
   if (readOnly()) return toast('Offline — connect to import');
   let rows; try { rows = C.parseInventoryCSV(await file.text()); } catch (e) { return toast('CSV import failed: ' + e.message, 3000); }
-  let added = 0, updated = 0, badEmx = 0;
+  let added = 0, updated = 0, badEmx = 0, linked = 0, noParent = 0; const links = [];
   for (const o of rows) {
+    const link = { parentEmx: o.parentEmx || '', parentSerial: o.parentSerial || '', partType: o.partType || '' }; delete o.parentEmx; delete o.parentSerial; delete o.partType;
     if (o.emxRaw && !o.emx) badEmx++; delete o.emxRaw;
     if (o.weightUnit) o.weightUnit = /^lb/i.test(o.weightUnit) ? 'lb' : 'kg';
     const ex = o.id && S.items.find(i => i.id === o.id);
-    if (ex) { const clean = Object.fromEntries(Object.entries(o).filter(([, v]) => v !== '')); Object.assign(ex, Store.sanitizeItem({ ...ex, ...clean, atts: ex.atts, updated: Date.now() }, S.settings)); updated++; }
-    else { const it = Store.sanitizeItem({ ...o, id: o.id && M.UUID_RE.test(o.id) ? o.id : undefined, category: o.category || 'Other' }, S.settings); if (S.items.some(i => i.id === it.id)) it.id = Store.uid('itm'); S.items.push(it); added++; }
+    if (ex) { const clean = Object.fromEntries(Object.entries(o).filter(([, v]) => v !== '')); Object.assign(ex, Store.sanitizeItem({ ...ex, ...clean, atts: ex.atts, updated: Date.now() }, S.settings)); updated++; links.push([ex, link]); }
+    else { const it = Store.sanitizeItem({ ...o, id: o.id && M.UUID_RE.test(o.id) ? o.id : undefined, category: o.category || 'Other' }, S.settings); if (S.items.some(i => i.id === it.id)) it.id = Store.uid('itm'); S.items.push(it); added++; links.push([it, link]); }
   }
+  const dupsEarly = Emx.dedupeEmx(S.items);
+  // parent links (Parent Electromaxx # / Parent serial / Part type) — resolved after every row is in, so a part may come before its parent
+  for (const [it, l] of links) {
+    if (l.parentEmx || l.parentSerial) {
+      const par = C.findParentFor(S.items, l, it.id);
+      if (par && !P.wouldCycle(S.items, it.id, par.id)) { it.parentId = par.id; it.partType = l.partType || it.partType || 'accessory'; linked++; } else noParent++;
+    } else if (l.partType && it.parentId) it.partType = l.partType;
+  }
+  P.fixParents(S.items);
   for (const i of S.items) if (!S.settings.categories.includes(i.category)) S.settings.categories.push(i.category);
-  const dups = Emx.dedupeEmx(S.items);
+  const dups = dupsEarly.concat(Emx.dedupeEmx(S.items));
   persist(); render();
-  toast(`CSV: ${added} added, ${updated} updated${badEmx ? ` · ${badEmx} invalid Electromaxx # skipped` : ''}${dups.length ? ` · ${dups.length} duplicate Electromaxx # cleared (${dups.map(d => d.emx).join(', ')})` : ''}`, dups.length || badEmx ? 4500 : 2400);
+  toast(`CSV: ${added} added, ${updated} updated${linked ? ` · ${linked} linked as parts` : ''}${noParent ? ` · ${noParent} parent(s) not found` : ''}${badEmx ? ` · ${badEmx} invalid Electromaxx # skipped` : ''}${dups.length ? ` · ${dups.length} duplicate Electromaxx # cleared (${dups.map(d => d.emx).join(', ')})` : ''}`, dups.length || badEmx ? 4500 : 2400);
 }
 
 // ---------- actions ----------
@@ -815,13 +827,13 @@ const ACTIONS = {
   pickTripItems: () => {
     const t = trip();
     const o = openLayer(`<div class="sheet-h"><div class="title">ADD ITEMS TO ${esc(t.name.toUpperCase())}</div><button class="iconbtn" data-act="closeTop" aria-label="Close">✕</button></div>
-      <p class="hint">Items already in a selected kit are included automatically.</p>${pickerHTML(new Set(t.itemIds), 'trip')}
+      <p class="hint">Items already in a selected kit are included automatically, and every item brings its parts along (you can still leave single lines off).</p>${pickerHTML(new Set(t.itemIds), 'trip')}
       <div class="sheet-f"><span class="grow"></span><button class="btn ghost" data-act="closeTop">Cancel</button><button class="btn primary" data-act="saveTripItems">Done</button></div>`, { cls: 'wide', backdrop: false });
     o._trip = t;
   },
   saveTripItems: el => { const o = el.closest('.overlay'), t = o._trip; t.itemIds = pickedIds(o); t.excluded = t.excluded.filter(id => !t.itemIds.includes(id)); persist(); closeLayer(o, true); render(); },
   removeTripItem: el => { const t = trip(); t.itemIds = t.itemIds.filter(x => x !== el.dataset.id); persist(); render(); },
-  excludeLine: el => { const t = trip(), id = el.dataset.id; t.itemIds = t.itemIds.filter(x => x !== id); if (t.kitIds.some(k => S.kits.find(x => x.id === k)?.itemIds.includes(id)) && !t.excluded.includes(id)) t.excluded.push(id); persist(); render(); },
+  excludeLine: el => { const t = trip(), id = el.dataset.id; t.itemIds = t.itemIds.filter(x => x !== id); if (C.tripItems(S, t).some(x => x.item.id === id) && !t.excluded.includes(id)) t.excluded.push(id); persist(); render(); },
   restoreLine: el => { const t = trip(); t.excluded = t.excluded.filter(x => x !== el.dataset.id); persist(); render(); },
   previewCarnet: () => { if (!C.buildGeneralList(S, trip()).lines.length) return toast('Add kits or items first'); showPaper(); },
   closePaper: () => closePaper(),
