@@ -1,4 +1,4 @@
-# ShowCrew GearVault — ShowCrew Tools (v2.2 · Supabase cloud)
+# ShowCrew GearVault — ShowCrew Tools (v2.3 · Supabase cloud)
 
 Track computer / show gear (Millumin, PowerPoint & Keynote rigs, rack PCs, audio, network, cables, cases) with photos and receipts,
 group it into kits / road cases, and build the **ATA Carnet General List** for travel abroad.
@@ -12,13 +12,15 @@ Live: https://don-duckworth.github.io/showcrew-gearvault/ (GitHub Pages, `main` 
 ## Status of Don's project
 
 Project **ShowCrew GearVault** (ref `ggtkglxvuxvmuqtpvlgs`, us-east-2). Steps 1, 2 and 7 below are **done**: the schema is applied
-(migrations `init_gearvault` + `init_gearvault_advisor_fixes`, for v2.1 `electromaxx_no` + `electromaxx_trip_toggle` = `0002_electromaxx.sql`, and for v2.2 `parts_parent_child` = `0003_parts.sql`) and `js/config.js` holds the project URL and the `sb_publishable_…` key.
+(migrations `init_gearvault` + `init_gearvault_advisor_fixes`, for v2.1 `electromaxx_no` + `electromaxx_trip_toggle` = `0002_electromaxx.sql`, for v2.2 `parts_parent_child` = `0003_parts.sql`, and for v2.3 `fmv_columns` = `0004_fmv.sql`; the Edge Function `fmv-lookup` is deployed) and `js/config.js` holds the project URL and the `sb_publishable_…` key.
 Still to do in the dashboard (steps 3–6):
 
 - URL configuration (Site URL + Redirect URLs): https://supabase.com/dashboard/project/ggtkglxvuxvmuqtpvlgs/auth/url-configuration
 - MFA (check TOTP is enabled): https://supabase.com/dashboard/project/ggtkglxvuxvmuqtpvlgs/auth/mfa
 - Add your user (Auto Confirm): https://supabase.com/dashboard/project/ggtkglxvuxvmuqtpvlgs/auth/users
 - Turn off "Allow new users to sign up": https://supabase.com/dashboard/project/ggtkglxvuxvmuqtpvlgs/auth/providers
+- **Update values (v2.3)** — add the SerpApi key as an Edge Function secret named exactly **`SERPAPI_KEY`**:
+  https://supabase.com/dashboard/project/ggtkglxvuxvmuqtpvlgs/functions/secrets (see *Fair market value* below)
 - Optional custom SMTP: https://supabase.com/dashboard/project/ggtkglxvuxvmuqtpvlgs/auth/smtp
 
 ## One-time Supabase setup (≈10 minutes)
@@ -125,8 +127,31 @@ which only matters for password resets. Free-plan projects pause after a week of
     it a second; the torch is usually not offered on iOS. A Home Screen install may ask for camera permission again each launch. If you tapped *Don't
     Allow*, re-enable it in *Settings → Apps → Safari → Camera* (or the aA menu → Website Settings). *Take photo* is the reliable fallback.
 - **Supabase client**: `js/vendor/supabase.js` is the vendored supabase-js 2.117.2 UMD build (MIT, see `supabase-js.LICENSE`) — no CDN.
-- **Service worker** caches only the app's own files (`config.js` network-first); it never touches Supabase API/storage requests.
+- **Service worker** caches only the app's own files (`config.js` network-first); it never touches Supabase API/storage/functions requests.
   **Bump `VERSION` in `sw.js` whenever you change files** so installed copies refresh.
+
+## Fair market value — *Update values* (v2.3)
+
+*Gear → ⟳ Update values* (or *Look up value* in an item's editor) estimates each item's current value from **Google Shopping via SerpApi**.
+
+1. Make a free account at https://serpapi.com and copy your **API key** (Dashboard → *Api Key*).
+2. Supabase → **Edge Functions → Secrets**: https://supabase.com/dashboard/project/ggtkglxvuxvmuqtpvlgs/functions/secrets →
+   *Add new secret*: Name **`SERPAPI_KEY`**, Value = your SerpApi key → *Save*. No redeploy needed. (CLI: `supabase secrets set SERPAPI_KEY=…`.)
+   Never put the key in `js/config.js` or the repo — only the Edge Function can read it, and it never returns it.
+3. In the app: choose scope (all gear / current filter / items without a current value; installed parts and sold/retired gear are skipped unless you tick
+   them), *Look up values*, then **review**: suggested median, range, number of prices, up to 5 source links. Edit a row's search text and ↻ retry,
+   untick anything you don't want, *Apply selected*. Only then is `current_value` set (median rounded to whole dollars) and the lookup stored in
+   `fmv_value / fmv_low / fmv_high / fmv_count / fmv_checked_at / fmv_sources / fmv_query`. Items show *value checked &lt;date&gt;*.
+
+Notes:
+- **Quota**: 1 SerpApi search per item; the free plan is about **100 searches / month**. Lookups stop early if the quota or key fails.
+- **Accuracy**: Google Shopping mostly lists **new retail** prices, so used gear can be overstated — edit the value. Prices are USD (`gl=us`);
+  items kept in another currency can't be auto-applied.
+- **How the number is made** (`js/fmv.js`, shared with the function): prices from `shopping_results`, outliers removed with a 1.5×IQR fence
+  (when ≥ 4 prices), median of the rest. The search text is make + model + name — never serials, Electromaxx numbers or "SAMPLE".
+- **Security**: `supabase/functions/fmv-lookup` is deployed with `verify_jwt = true` and additionally refuses sessions that aren't MFA-verified
+  (`aal2`). It touches no database rows; the app saves what you apply. The button is disabled offline and the service worker never caches `/functions/v1/`.
+- Redeploy after editing: copy `js/fmv.js` into `supabase/functions/fmv-lookup/` (the unit test checks they match), then `supabase functions deploy fmv-lookup`.
 
 ## Tests
 
@@ -146,4 +171,7 @@ which only matters for password resets. Free-plan projects pause after a week of
   (10 checks: 6-digit format, NULL allowed, unique per owner on insert/update, other owners may reuse a number, `show_emx` default), then
   `supabase/tests/parts-test.sql` (15 checks: part_type values, no self-parent, no cycles, cross-owner parents rejected, delete parent → parent_id NULL,
   roots-first multi-row upserts, `fold_parts` default, aal1/other users can't relink).
+- `node tools/test-fmv.mjs` — v2.3 median / IQR outlier filter, query builder (no SAMPLE/serial/Electromaxx #), SerpApi parsing, source picking, fmv row round-trip.
+- `GV_URL=http://127.0.0.1:8766/ node tools/browser-test-fmv.mjs` — Update values with a mocked `functions.invoke`: scopes, missing_key message,
+  review table, retry, apply only selected, editor lookup, offline disable, sw. Writes `screenshots/desktop-fmv-review.png`, `iphone-fmv-review.png`.
 - Icons: `node tools/make-icons.mjs` (needs playwright).

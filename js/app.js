@@ -380,7 +380,7 @@ function fmvOpen() {
     const sc = $('input[name=fmvScope]:checked', o).value, inst = $('#fmvInstalled', o).checked, inact = $('#fmvInactive', o).checked;
     return (sc === 'filtered' ? filt : sc === 'novalue' ? noVal : all).filter(i => (inst || P.partTypeOf(i) !== 'installed') && (inact || inService(i)));
   };
-  const upd = () => { const n = pick().length; $('#fmvCount', o).innerHTML = `<b>${plural(n, 'item')}</b> → ${plural(n, 'search', )}`; $('#fmvGo', o).disabled = !n; };
+  const upd = () => { const n = pick().length; $('#fmvCount', o).innerHTML = `<b>${plural(n, 'item')}</b> → ${n} search${n === 1 ? '' : 'es'}`; $('#fmvGo', o).disabled = !n; };
   o.addEventListener('change', upd); upd();
   o.addEventListener('click', e => {
     if (e.target.closest('[data-close]')) return closeLayer(o);
