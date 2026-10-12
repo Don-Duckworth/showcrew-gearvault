@@ -1,4 +1,4 @@
-# ShowCrew GearVault — ShowCrew Tools (v2.3 · Supabase cloud)
+# ShowCrew GearVault — ShowCrew Tools (v2.4 · Supabase cloud)
 
 Track computer / show gear (Millumin, PowerPoint & Keynote rigs, rack PCs, audio, network, cables, cases) with photos and receipts,
 group it into kits / road cases, and build the **ATA Carnet General List** for travel abroad.
@@ -12,7 +12,7 @@ Live: https://don-duckworth.github.io/showcrew-gearvault/ (GitHub Pages, `main` 
 ## Status of Don's project
 
 Project **ShowCrew GearVault** (ref `ggtkglxvuxvmuqtpvlgs`, us-east-2). Steps 1, 2 and 7 below are **done**: the schema is applied
-(migrations `init_gearvault` + `init_gearvault_advisor_fixes`, for v2.1 `electromaxx_no` + `electromaxx_trip_toggle` = `0002_electromaxx.sql`, for v2.2 `parts_parent_child` = `0003_parts.sql`, and for v2.3 `fmv_columns` = `0004_fmv.sql`; the Edge Function `fmv-lookup` is deployed) and `js/config.js` holds the project URL and the `sb_publishable_…` key.
+(migrations `init_gearvault` + `init_gearvault_advisor_fixes`, for v2.1 `electromaxx_no` + `electromaxx_trip_toggle` = `0002_electromaxx.sql`, for v2.2 `parts_parent_child` = `0003_parts.sql`, for v2.3 `fmv_columns` + `fmv_sources_both` = `0004_fmv.sql`, and for v2.4 `value_as_of` = `0005_value_date.sql`; the Edge Function `fmv-lookup` is deployed) and `js/config.js` holds the project URL and the `sb_publishable_…` key.
 Still to do in the dashboard (steps 3–6):
 
 - URL configuration (Site URL + Redirect URLs): https://supabase.com/dashboard/project/ggtkglxvuxvmuqtpvlgs/auth/url-configuration
@@ -132,20 +132,20 @@ which only matters for password resets. Free-plan projects pause after a week of
 
 ## Fair market value — *Update values* (v2.3)
 
-*Gear → ⟳ Update values* (or *Look up value* in an item's editor) estimates each item's current value from **two SerpApi sources with one key**: **eBay sold listings** (`engine=ebay`, `_nkw`, `LH_Sold=1`, `LH_Complete=1`) and **Google Shopping** (`engine=google_shopping`, `gl=us`).
+*Gear → ⟳ Update values* (or *Look up value* in an item's editor) estimates each item's current value from **three SerpApi sources with one key**: **Google AI** (default — `engine=google_ai_mode`, question “What is the fair market value of a used *make model name* in USD?”; dollar figure parsed from the answer, a range → its midpoint with low/high kept, the quoted sentence and reference links shown; falls back to the regular Google **AI Overview** (`engine=google`) when AI Mode returns no text), **eBay sold listings** (`engine=ebay`, `_nkw`, `LH_Sold=1`, `LH_Complete=1`) and **Google Shopping** (`engine=google_shopping`, `gl=us`).
 
 1. Make a free account at https://serpapi.com and copy your **API key** (Dashboard → *Api Key*).
 2. Supabase → **Edge Functions → Secrets**: https://supabase.com/dashboard/project/ggtkglxvuxvmuqtpvlgs/functions/secrets →
    *Add new secret*: Name **`SERPAPI_KEY`**, Value = your SerpApi key → *Save*. No redeploy needed. (CLI: `supabase secrets set SERPAPI_KEY=…`.)
    Never put the key in `js/config.js` or the repo — only the Edge Function can read it, and it never returns it.
 3. In the app: choose scope (all gear / current filter / items without a current value; installed parts and sold/retired gear are skipped unless you tick
-   them) and sources (default both), *Look up values*, then **review**: per source the median, range, number of prices and up to 5 links. The
-   **suggested** value is the eBay sold median when it has ≥ 3 prices after outlier removal, else the Google median. Pick either source or type your
+   them) and sources (default **Google AI only**; eBay and Shopping optional), *Look up values*, then **review**: per source the median, range, number of prices and up to 5 links. The
+   **suggested** value is Google AI when its answer contains a dollar figure, else the eBay sold median when it has ≥ 3 prices after outlier removal, else the Google Shopping median. Pick either source or type your
    own value, edit a row's search text and ↻ retry, untick anything you don't want, *Apply selected*. Only then is `current_value` set (median rounded to whole dollars) and the lookup stored in
    `fmv_value / fmv_low / fmv_high / fmv_count / fmv_checked_at / fmv_query`, with `fmv_sources` = `{pick, links, ebay_sold:{median,low,high,count,sources}, google_new:{…}}`. Items show *value checked &lt;date&gt;*.
 
 Notes:
-- **Quota**: 1 SerpApi search per item **per source** (both = 2 per item); the free plan is about **100 searches / month** (≈ 50 items with both). Lookups stop early if the quota or key fails.
+- **Quota**: 1 SerpApi search per item **per source** (Google AI alone = 1, or 2 when it falls back to the AI Overview; all three ≈ 3); the free plan is about **100 searches / month**. Lookups stop early if the quota or key fails.
 - **eBay sold caveat**: since Sep 2026 SerpApi lists its eBay *Sold/Complete* filters as deprecated (eBay put sold results behind a login). The
   function only counts results that carry a sold marker; if none do it shows *Sold listings unavailable* and the Google value is suggested — the eBay
   search is still billed, so untick eBay if that keeps happening.
@@ -156,6 +156,14 @@ Notes:
 - **Security**: `supabase/functions/fmv-lookup` is deployed with `verify_jwt = true` and additionally refuses sessions that aren't MFA-verified
   (`aal2`). It touches no database rows; the app saves what you apply. The button is disabled offline and the service worker never caches `/functions/v1/`.
 - Redeploy after editing: copy `js/fmv.js` into `supabase/functions/fmv-lookup/` (the unit test checks they match), then `supabase functions deploy fmv-lookup`.
+
+## Value as of (v2.4)
+
+Every item has a **Value as of** date (`items.value_as_of`, backfilled from `fmv_checked_at`). It is set to today when *Apply selected* / *Look up value*
+sets a value or when you type a current value — and stays editable. The current-value field and the value on each list row are outlined **green**
+(“✓ valued 2026-10-12 · 3 mo ago”) when the date is within 365 days and **red** (“⚠ value >1 yr old” / “no value date”) otherwise; an item valued only
+by its purchase price uses its purchase date. Trips show a red banner listing every stale line (incl. installed parts) with *Update values* for just
+those items and a *Fix* link each; print / CSV export ask first. Gear filter: *Value >1 yr old / no date*. Inventory CSV and backups carry *Value as of*.
 
 ## Tests
 
@@ -175,7 +183,7 @@ Notes:
   (10 checks: 6-digit format, NULL allowed, unique per owner on insert/update, other owners may reuse a number, `show_emx` default), then
   `supabase/tests/parts-test.sql` (15 checks: part_type values, no self-parent, no cycles, cross-owner parents rejected, delete parent → parent_id NULL,
   roots-first multi-row upserts, `fold_parts` default, aal1/other users can't relink).
-- `node tools/test-fmv.mjs` — v2.3 median / IQR outlier filter, query builder (no SAMPLE/serial/Electromaxx #), SerpApi parsing, source picking, fmv row round-trip.
+- `node tools/test-fmv.mjs` — v2.4 value freshness + Google AI answer parsing; v2.3 median / IQR outlier filter, query builder (no SAMPLE/serial/Electromaxx #), SerpApi parsing, source picking, fmv row round-trip.
 - `GV_URL=http://127.0.0.1:8766/ node tools/browser-test-fmv.mjs` — Update values with a mocked `functions.invoke`: scopes, missing_key message,
   review table, retry, apply only selected, editor lookup, offline disable, sw. Writes `screenshots/desktop-fmv-review.png`, `iphone-fmv-review.png`.
 - Icons: `node tools/make-icons.mjs` (needs playwright).

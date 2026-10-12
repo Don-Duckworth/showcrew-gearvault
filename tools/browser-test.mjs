@@ -78,6 +78,8 @@ async function addItem(page, f, files = [], touch = false) {
   await tap(page, '.overlay [data-act=saveItem]', touch); await page.waitForFunction(() => !document.querySelector('.overlay'));
   await settled(page);
 }
+// v2.4: exports may ask twice (missing data, then out-of-date values) — confirm each
+const okAll = async page => { for (let n = 0; n < 3; n++) { const b = page.locator('.overlay [data-r="1"]').last(); if (!(await b.count())) break; await b.click(); await page.waitForTimeout(150); } };
 const dl = async (page, trigger) => { const [d] = await Promise.all([page.waitForEvent('download'), trigger()]); const p = TMP + d.suggestedFilename(); await d.saveAs(p); return p; };
 const hideToast = async page => { await page.evaluate(() => document.getElementById('toast').classList.remove('show')); await page.waitForTimeout(250); };
 const shot = async (page, name, o = {}) => { await hideToast(page); await page.screenshot({ path: OUT + name, ...o }); };
@@ -198,7 +200,7 @@ ok((await page.locator('#tripLines tbody tr').count()) === 5, 'trip general list
 let issues = await page.locator('#carnetIssues').innerText();
 ok(issues.includes('1 missing serial') && issues.includes('1 missing country of origin'), 'pre-export flags: ' + issues.replace(/\s+/g, ' '));
 await page.click('#view [data-act=csvCarnet]');
-let csvPath = await dl(page, () => page.click('.overlay [data-r="1"]'));
+let csvPath = await dl(page, () => okAll(page));
 let csv = fs.readFileSync(csvPath, 'utf8');
 ok(csv.startsWith('\uFEFF') && csv.includes('SAMPLE-RK2U-0042') && /TOTAL,,10,/.test(csv), 'carnet CSV exported');
 await page.locator('#tripLines tr', { hasText: 'Starlink' }).locator('[data-act=editItem]').click();
@@ -402,14 +404,14 @@ ok((await page.locator('#tripLines th', { hasText: 'EMX' }).count()) === 0, 'car
 await page.check('[data-tf=emxCol]'); await settled(page);
 ok((await page.locator('#tripLines th', { hasText: 'EMX' }).count()) === 1 && (await page.locator('#tripLines td.emxc').first().innerText()) === '004217', 'toggle on → EMX # column in the trip table');
 T = await fdb(page); ok(T.trips[0].show_emx === true, 'toggle saved (trips.show_emx)');
-await page.click('#view [data-act=csvCarnet]'); csvPath = await dl(page, () => page.click('.overlay [data-r="1"]'));
+await page.click('#view [data-act=csvCarnet]'); csvPath = await dl(page, () => okAll(page));
 csv = fs.readFileSync(csvPath, 'utf8');
 ok(/Serial number,Electromaxx #,Number of pieces/.test(csv) && /SAMPLE-C02XK1,004217,1,/.test(csv), 'carnet CSV gets the Electromaxx # column');
 await page.click('#view [data-act=previewCarnet]'); await page.waitForSelector('#printRoot.show .paper');
 ok((await page.locator('.paper th', { hasText: 'Electromaxx #' }).count()) === 1, 'printable general list gets the column');
 await page.click('.paperbar [data-act=closePaper]');
 await page.uncheck('[data-tf=emxCol]'); await settled(page);
-await page.click('#view [data-act=csvCarnet]'); csvPath = await dl(page, () => page.click('.overlay [data-r="1"]'));
+await page.click('#view [data-act=csvCarnet]'); csvPath = await dl(page, () => okAll(page));
 ok(!fs.readFileSync(csvPath, 'utf8').includes('Electromaxx'), 'toggle off → column gone from CSV');
 ok(errs.length === 0, 'no console errors (Electromaxx A) ' + JSON.stringify(errs));
 await ctx.close();
@@ -567,7 +569,7 @@ await page.pdf({ path: OUT + 'carnet-general-list-parts-sample.pdf', format: 'Le
 await page.emulateMedia({ media: 'screen' }); await page.setViewportSize({ width: 1366, height: 900 });
 await page.click('.paperbar [data-act=closePaper]');
 await page.click('#view [data-act=csvCarnet]');
-let pcsv = fs.readFileSync(await dl(page, () => page.click('.overlay [data-r="1"]')), 'utf8');
+let pcsv = fs.readFileSync(await dl(page, () => okAll(page)), 'utf8');
 ok(/\r\n1a,.*installed in item 1.*,SAMPLE-GPU-01,,,1000\.00,China/.test(pcsv) && /TOTAL,,4,.*,9670\.00/.test(pcsv), 'general list CSV: sub-line 1a (no pieces) + totals');
 // fold switch
 await page.check('[data-tf=foldParts]'); await settled(page);
@@ -579,7 +581,7 @@ await page.click('#view [data-act=previewCarnet]'); await page.waitForSelector('
 ok((await page.locator('.paper tbody tr.subline').count()) === 0 && (await page.locator('.paper tbody tr').first().innerText()).includes('SAMPLE-DL-02'), 'print honors fold');
 await page.click('.paperbar [data-act=closePaper]');
 await page.click('#view [data-act=csvCarnet]');
-pcsv = fs.readFileSync(await dl(page, () => page.click('.overlay [data-r="1"]')), 'utf8');
+pcsv = fs.readFileSync(await dl(page, () => okAll(page)), 'utf8');
 ok(!/\r\n1a,/.test(pcsv) && pcsv.includes('incl. installed') && /TOTAL,,4,.*,9670\.00/.test(pcsv), 'CSV honors fold');
 await page.uncheck('[data-tf=foldParts]'); await settled(page);
 // inventory CSV export / import with parent columns

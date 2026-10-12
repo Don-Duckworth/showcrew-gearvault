@@ -41,12 +41,14 @@ const MOCK = () => {
     window.__fnCalls.push([body.items.length, body.sources.join('+')]);
     const F = window.__gv.Fmv;
     const G = { macbook: [2899, 3099, 2999, 3199, 9999, 49], studio: [3599, 3799, 3699, 3899], fireface: [2190, 2290], ddr5: [150, 170, 160, 155] };
+    const A = { macbook: { median: 2350, low: 2100, high: 2600, count: 1, quote: 'A used one typically sells for $2,100 to $2,600 depending on condition.', via: 'ai_mode', sources: [{ title: 'SAMPLE ref', source: 'Swappa', price: null, link: 'https://example.com/ai/1' }] } };
     const E = { macbook: [2100, 2200, 2300, 2250, 90], studio: [2600, 2800], ddr5: [80, 90, 85] };
     const blk = (P, k, src) => { if (!k || !P[k]) return { median: null, low: null, high: null, count: 0, total: 0, sources: [] }; const est = F.estimate(P[k]);
       return { ...est, sources: P[k].slice(0, 2).map((p, i) => ({ title: `SAMPLE ${k} ${i}`, source: src === 'ebay_sold' ? 'eBay' : ['Best Buy', 'B&H'][i], price: p, link: `https://example.com/${src}/${k}/${i}` })) }; };
     return { status: 200, body: { checked_at: '2026-10-12T18:00:00.000Z', sources: body.sources, results: body.items.map(it => {
       const q = it.query.toLowerCase(), k = Object.keys(G).find(k => q.includes(k));
       const out = { item_id: it.item_id, query: it.query };
+      if (body.sources.includes('google_ai')) out.google_ai = (k && A[k]) || { median: null, low: null, high: null, count: 0, quote: 'Prices vary.', error: 'no_number', sources: [] };
       if (body.sources.includes('ebay_sold')) out.ebay_sold = blk(E, k, 'ebay_sold');
       if (body.sources.includes('google_new')) out.google_new = blk(G, k, 'google_new');
       out.suggested = F.suggest(out); return out;
@@ -72,6 +74,9 @@ await page.click('.overlay [data-close]');
 // with prices
 await page.evaluate(MOCK);
 await page.click('[data-act=fmvOpen]'); await page.click('input[value=novalue]');
+ok(await page.locator('[data-fmvsrc=google_ai]').isChecked() && !(await page.locator('[data-fmvsrc=ebay_sold]').isChecked()) && !(await page.locator('[data-fmvsrc=google_new]').isChecked()), 'default source: Google AI only');
+ok(/× 1 = <b>3 searches/.test(await page.locator('#fmvCount').innerHTML()), 'default cost 1 search/item');
+await page.uncheck('[data-fmvsrc=google_ai]'); await page.check('[data-fmvsrc=ebay_sold]'); await page.check('[data-fmvsrc=google_new]');
 ok(/3 items<\/b> × 2 = <b>6 searches/.test(await page.locator('#fmvCount').innerHTML()), 'scope "without current value" → 3 items × 2 sources = 6 searches');
 await page.uncheck('[data-fmvsrc=ebay_sold]'); ok(/× 1 = <b>3 searches/.test(await page.locator('#fmvCount').innerHTML()), 'toggle off eBay → 1 search/item');
 await page.check('[data-fmvsrc=ebay_sold]');
@@ -106,7 +111,7 @@ const m = by(ID.mbp);
 ok(m.current_value === 3049 && m.fmv_value === 3049 && m.fmv_sources.pick === 'google_new' && m.fmv_sources.ebay_sold.median === 2225 && m.fmv_sources.google_new.count === 4 && m.fmv_sources.links.length === 2 && m.fmv_checked_at && m.fmv_query, 'applied Google pick; fmv_sources stores both sources: ' + JSON.stringify(m.fmv_sources).slice(0, 160));
 ok(by(ID.studio).current_value === 3300 && by(ID.studio).fmv_sources.pick === 'manual' && by(ID.studio).fmv_sources.ebay_sold.count === 2, 'own value applied, both source stats kept');
 ok(by(ID.eur).current_value == null && by(ID.ram).fmv_value == null, 'EUR + installed untouched');
-ok(/value checked Oct 12, 2026/.test(await page.locator('.gear[data-id="' + ID.studio + '"]').innerText()), '"value checked <date>" on the item');
+ok(/valued 20\d\d-\d\d-\d\d · today/.test(await page.locator('.gear[data-id="' + ID.studio + '"]').innerText()) && by(ID.studio).value_as_of, 'Apply sets value_as_of = today; list shows "valued <date> · today"');
 ok(JSON.stringify(await page.evaluate(() => window.__fnCalls)) === '[[4,"ebay_sold+google_new"],[1,"ebay_sold+google_new"]]', 'batched: one call for 4 items, 1 for the retry, both sources');
 // per-item lookup from the editor (suggested = eBay sold for the MacBook)
 await page.click(`.gear[data-id="${ID.mbp}"]`); await page.waitForSelector('[data-act=fmvItem]');
@@ -116,6 +121,65 @@ ok(await page.locator('[data-f=currentValue]').inputValue() === '2225' && /eBay 
 ok((await fdb(page)).items.find(i => i.id === ID.mbp).current_value === 3049, 'editor lookup not saved until Save');
 await page.click('.overlay [data-act=saveItem]'); await settled(page);
 ok((await fdb(page)).items.find(i => i.id === ID.mbp).current_value === 2225, 'saved after Save');
+// Google AI source (default) from the editor
+await page.click(`.gear[data-id="${ID.mbp}"]`); await page.waitForSelector('[data-act=fmvItem]');
+await page.evaluate(() => { window.__gvSetSrc = true; });
+await page.click('[data-act=fmvItem]'); await page.waitForFunction(() => /Done/.test(document.querySelector('#fmvProg span')?.textContent || ''));
+await page.click('.overlay [data-close]');
+// run again with AI checked via the bulk dialog scoped to the filtered list
+await page.click('.overlay [data-act=cancelEdit]');
+await page.fill('#q', 'Show laptop'); await page.click('[data-act=fmvOpen]'); await page.click('input[value=filtered]');
+await page.uncheck('[data-fmvsrc=ebay_sold]'); await page.uncheck('[data-fmvsrc=google_new]'); await page.check('[data-fmvsrc=google_ai]');
+await page.click('#fmvGo'); await page.waitForFunction(() => /Done/.test(document.querySelector('#fmvProg span').textContent));
+const aiCell = page.locator('#fmvBody tr').first().locator('td.sc').first();
+ok(/\$2,350/.test(await aiCell.innerText()) && /suggested/.test(await aiCell.innerText()) && /typically sells for/.test(await aiCell.locator('.aiq').innerText()) && /\$2,100–\$2,600/.test(await aiCell.innerText()), 'Google AI: midpoint $2,350 suggested, range + quote snippet + reference link');
+await page.click('#fmvApply'); await settled(page);
+let mm = (await fdb(page)).items.find(i => i.id === ID.mbp);
+ok(mm.current_value === 2350 && mm.fmv_sources.pick === 'google_ai' && /typically/.test(mm.fmv_sources.google_ai.quote), 'AI value applied, quote stored');
+await page.fill('#q', '');
+
+// ===== v2.4 value as of =====
+await page.evaluate(([DON]) => {
+  __fakeSb.insert('items', { id: 'aaaaaaaa-0000-4000-8000-000000000007', owner_id: DON, name: 'SAMPLE Old Starlink Mini', category: 'Other', make: 'Starlink', model: 'Mini', serial: 'SAMPLE-SL', qty: 1, status: 'active', currency: 'USD', vendor: '', origin: 'Taiwan', weight_unit: 'kg', notes: '', tags: [], price: 599, current_value: 450, value_as_of: '2024-05-01' });
+  __fakeSb.insert('trips', { id: 'bbbbbbbb-0000-4000-8000-000000000001', owner_id: DON, name: 'SAMPLE EU tour', destinations: 'DE', currency: 'USD', weight_unit: 'kg', holder: '', purpose: '', carnet_no: '', notes: '', serial_in_desc: false, show_emx: false, fold_parts: false });
+  ['aaaaaaaa-0000-4000-8000-000000000001', 'aaaaaaaa-0000-4000-8000-000000000002', 'aaaaaaaa-0000-4000-8000-000000000007'].forEach((item_id, position) => __fakeSb.insert('trip_items', { owner_id: DON, trip_id: 'bbbbbbbb-0000-4000-8000-000000000001', item_id, mode: 'include', position }));
+}, [DON]);
+await settled(page); await page.evaluate(() => window.__gv.refreshFromCloud(true)); await page.waitForFunction(() => window.__gv.S.trips.length === 1);
+const OLD = 'aaaaaaaa-0000-4000-8000-000000000007';
+ok(await page.locator(`.gear[data-id="${ID.mbp}"] .g-val.val-fresh`).count() === 1 && await page.locator(`.gear[data-id="${OLD}"] .g-val.val-stale`).count() === 1, 'list rows: green outline fresh, red outline stale');
+ok(/value >1 yr old · valued 2024-05-01/.test(await page.locator(`.gear[data-id="${OLD}"] .g-val`).innerText()), 'stale row has text label (not color only)');
+await page.selectOption('[data-filter=fStatus]', 'val:stale');
+const staleNames = await page.locator('#gearList .gear .g-name').allInnerTexts();
+ok(staleNames.includes('SAMPLE Old Starlink Mini') && !staleNames.includes('SAMPLE Show laptop A'), 'Gear filter "Value >1 yr old / no date": ' + staleNames.join(', '));
+await page.selectOption('[data-filter=fStatus]', '');
+await page.click(`.gear[data-id="${ID.mbp}"]`); await page.waitForSelector('#valFld');
+ok(await page.locator('#valFld.val-fresh').count() === 1 && /✓ valued 20\d\d-\d\d-\d\d · today/.test(await page.locator('#valAge').innerText()) && (await page.locator('[data-f=valueAsOf]').inputValue()).length === 10, 'editor: green when valued today, Value as of date field filled');
+await hideToast(page); await page.locator('.overlay .modal-card').screenshot({ path: OUT + 'desktop-editor-value-fresh.png' });
+await page.click('.overlay [data-act=cancelEdit]');
+await page.click(`.gear[data-id="${OLD}"]`); await page.waitForSelector('#valFld');
+ok(await page.locator('#valFld.val-stale').count() === 1 && /value >1 yr old/.test(await page.locator('#valAge').innerText()), 'editor: red when older than a year');
+await page.locator('#valFld').scrollIntoViewIfNeeded(); await hideToast(page); await page.locator('.overlay .modal-card').screenshot({ path: OUT + 'desktop-editor-value-stale.png' });
+await page.fill('[data-f=currentValue]', '420');
+const td = await page.evaluate(() => window.__gv.VD.todayISO());
+ok(await page.locator('[data-f=valueAsOf]').inputValue() === td && await page.locator('#valFld.val-fresh').count() === 1, 'editing current value sets Value as of = today → green');
+await page.fill('[data-f=valueAsOf]', '2025-01-01'); await page.dispatchEvent('[data-f=valueAsOf]', 'change');
+ok(await page.locator('#valFld.val-stale').count() === 1, 'date stays editable (back-dated → red)');
+await page.click('.overlay [data-act=cancelEdit]'); if (await page.locator('.overlay [data-r="1"]').count()) await page.click('.overlay [data-r="1"]');
+await page.waitForFunction(() => !document.querySelector('.overlay')).catch(() => {});
+// carnet warning
+await page.click('#nav [data-view=trips]'); await page.click('[data-act=openTrip]'); await page.waitForSelector('#staleBanner');
+const ban = await page.locator('#staleBanner').innerText();
+ok(/SAMPLE Old Starlink Mini/.test(ban) && /SAMPLE 64GB RAM/.test(ban) && !/Show laptop/.test(ban) && /no value date/.test(ban), 'carnet banner lists stale items incl. installed part: ' + ban.replace(/\s+/g, ' ').slice(0, 200));
+ok(await page.locator('#staleBanner [data-act=editItem]').count() === 2, 'Fix link per stale item');
+await hideToast(page); await page.locator('#staleBanner').scrollIntoViewIfNeeded(); await page.screenshot({ path: OUT + 'desktop-carnet-stale-warning.png' });
+await page.click('[data-act=fmvStale]'); await page.waitForSelector('#fmvGo');
+ok(await page.locator('input[value=preset]').isChecked() && /2 items/.test(await page.locator('#fmvCount').innerText()), 'Update values from banner is scoped to the 2 stale items');
+await page.click('.overlay [data-close]');
+await page.click('[data-act=csvCarnet]'); await page.waitForSelector('.overlay .lbl');
+if (/incomplete/.test(await page.locator('.overlay').innerText())) { await page.click('.overlay [data-r="1"]'); await page.waitForTimeout(200); }
+const ovt = await page.locator('.overlay').last().innerText(); ok(/out of date/i.test(ovt), 'CSV export warns about out-of-date values first: ' + ovt.slice(0, 120));
+await page.locator('.overlay').last().locator('[data-r="0"]').click();
+await page.click('#nav [data-view=gear]');
 // offline
 await ctx.setOffline(true); await page.waitForTimeout(300);
 ok(await page.locator('[data-act=fmvOpen]').isDisabled(), 'Update values disabled offline');
@@ -124,7 +188,7 @@ ok(await page.locator('[data-act=fmvOpen]').isEnabled(), 're-enabled online');
 // sw never caches function calls
 const sw = await (await fetch(URL + 'sw.js')).text();
 ok(/functions\)\\\/v1/.test(sw) || /functions/.test(sw.match(/const NEVER = .*/)[0]), 'sw bypasses /functions/v1/');
-ok(/scgv-v2\.3\.0/.test(sw) && sw.includes("'./js/fmv.js'"), 'sw VERSION scgv-v2.3.0 precaches fmv.js');
+ok(/scgv-v2\.4\.0/.test(sw) && sw.includes("'./js/fmv.js'") && sw.includes("'./js/valdate.js'"), 'sw VERSION scgv-v2.4.0 precaches fmv.js + valdate.js');
 ok(!errs.length, 'no console errors ' + errs.join(' | '));
 await ctx.close();
 

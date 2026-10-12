@@ -1154,5 +1154,5 @@ document.addEventListener('visibilitychange', () => { if (document.visibilitySta
 window.addEventListener('beforeunload', e => { if (unsaved()) { e.preventDefault(); e.returnValue = ''; } });
 
 if ('serviceWorker' in navigator && location.protocol !== 'file:') navigator.serviceWorker.register('./sw.js').catch(e => console.warn('SW registration failed', e));
-window.__gv = { Fmv, get S() { return S; }, ui, render, Files, C, Store, M, Cache, Scan, Emx, layers, get cloud() { return cloud; }, get user() { return user; }, runSync, refreshFromCloud, readOnly };
+window.__gv = { Fmv, VD, get S() { return S; }, ui, render, Files, C, Store, M, Cache, Scan, Emx, layers, get cloud() { return cloud; }, get user() { return user; }, runSync, refreshFromCloud, readOnly };
 boot();
