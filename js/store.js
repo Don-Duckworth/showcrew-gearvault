@@ -27,6 +27,7 @@ export function makeItem(settings = defaultSettings()) {
     id: uid('itm'), name: '', category: settings.categories[0] || 'Other', make: '', model: '', serial: '', emx: '', qty: 1,
     purchaseDate: '', price: null, currency: settings.currency || 'USD', currentValue: null, vendor: '', origin: '',
     weight: null, weightUnit: settings.weightUnit || 'kg', notes: '', tags: [], status: 'active', atts: [],
+    fmv: null, // v2.3 last applied value lookup {value, low, high, count, checkedAt, sources[], query}
     parentId: '', partType: '', // v2.2 parts: parent item id ('' = standalone), 'installed' | 'accessory'
     created: Date.now(), updated: Date.now(),
   };
@@ -49,6 +50,14 @@ export function splitTags(v) {
   const arr = Array.isArray(v) ? v : String(v || '').split(/[;,]/);
   return [...new Set(arr.map(t => String(t).trim()).filter(Boolean).map(t => t.slice(0, 40)))].slice(0, 30);
 }
+const httpsUrl = v => (/^https:\/\//i.test(String(v || '')) ? s(v, 600) : '');
+export function sanitizeFmv(f) {
+  if (!f || typeof f !== 'object' || numOrNull(f.value) == null) return null;
+  const t = Date.parse(f.checkedAt);
+  return { value: numOrNull(f.value), low: numOrNull(f.low), high: numOrNull(f.high), count: Math.max(0, Math.round(numOrNull(f.count) || 0)),
+    checkedAt: Number.isFinite(t) ? new Date(t).toISOString() : null, query: s(f.query, 200),
+    sources: (Array.isArray(f.sources) ? f.sources : []).slice(0, 5).map(x => ({ title: s(x?.title, 200), source: s(x?.source, 80), price: numOrNull(x?.price), link: httpsUrl(x?.link) })) };
+}
 export function sanitizeItem(i, settings = defaultSettings()) {
   const base = makeItem(settings);
   const st = STATUSES.some(([k]) => k === i.status) ? i.status : 'active';
@@ -59,6 +68,7 @@ export function sanitizeItem(i, settings = defaultSettings()) {
     vendor: s(i.vendor, 120), origin: s(i.origin, 80), weight: numOrNull(i.weight), weightUnit: i.weightUnit === 'lb' ? 'lb' : 'kg',
     notes: s(i.notes, 4000), tags: splitTags(i.tags), status: st,
     parentId: s(i.parentId, 60), partType: i.parentId ? (normPartType(i.partType) || 'accessory') : '',
+    fmv: sanitizeFmv(i.fmv),
     atts: Array.isArray(i.atts) ? i.atts.filter(a => a && a.id).map(a => ({ id: s(a.id, 60), name: s(a.name, 200) || 'file', type: s(a.type, 80), size: +a.size || 0, kind: a.kind === 'receipt' ? 'receipt' : 'photo', added: +a.added || Date.now(), path: a.path ? s(a.path, 300) : undefined, thumb: a.thumb ? s(a.thumb, 300) : null })) : [],
     created: +i.created || Date.now(), updated: +i.updated || Date.now(),
   };

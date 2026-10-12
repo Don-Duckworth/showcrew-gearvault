@@ -1,6 +1,8 @@
 // Unit tests for js/fmv.js (median / outlier filter / query builder / SerpApi parsing). Run: node tools/test-fmv.mjs
 import * as F from '../js/fmv.js';
 import fs from 'node:fs';
+import * as M from '../js/cloudmap.js';
+import * as Store from '../js/store.js';
 let fails = 0; const ok = (c, m) => { console.log((c ? 'PASS ' : 'FAIL ') + m); if (!c) fails++; };
 const eq = (a, b) => JSON.stringify(a) === JSON.stringify(b);
 ok(F.median([3, 1, 2]) === 2 && F.median([4, 1, 3, 2]) === 2.5 && F.median([]) === null, 'median odd/even/empty');
@@ -26,4 +28,11 @@ const est = F.estimate(p.prices), src = F.pickSources(p.items, est);
 ok(src.length === 2 && src[0].price === 2099 && src.every(s => s.link.startsWith('https://')), 'pickSources: https only, closest to median first');
 ok(eq(F.parseShopping({}).prices, []), 'parseShopping no results');
 ok(fs.readFileSync(new URL('../js/fmv.js', import.meta.url), 'utf8') === fs.readFileSync(new URL('../supabase/functions/fmv-lookup/fmv.js', import.meta.url), 'utf8'), 'Edge Function fmv.js is identical to js/fmv.js');
+{ const S = Store.emptyState(); const it = Store.makeItem(S.settings); it.name = 'X';
+  it.fmv = Store.sanitizeFmv({ value: 2149, low: 1999, high: 2299, count: 4, checkedAt: '2026-10-12T18:00:00+00:00', query: 'Apple X', sources: [{ title: 'A', source: 'B', price: 2099, link: 'https://a' }, { title: 'bad', link: 'javascript:x' }] });
+  S.items.push(it); const rows = M.rowsFromState(S, 'u'); const r = [...rows.items.values()][0];
+  ok(r.fmv_value === 2149 && r.fmv_count === 4 && r.fmv_sources[1].link === '' && r.fmv_checked_at === '2026-10-12T18:00:00.000Z', 'fmv → row (unsafe link blanked)');
+  const back = M.stateFromRows({ items: [{ ...r, created_at: '2026-01-01', updated_at: '2026-01-01' }] }).items[0];
+  ok(JSON.stringify(back.fmv) === JSON.stringify(it.fmv), 'fmv row round-trip');
+  const none = M.stateFromRows({ items: [{ ...r, fmv_value: null }] }).items[0]; ok(none.fmv === null, 'no fmv → null'); }
 console.log(fails ? `${fails} FAILED` : 'ALL FMV TESTS PASS'); process.exit(fails ? 1 : 0);
