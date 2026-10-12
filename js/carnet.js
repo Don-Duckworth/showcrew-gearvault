@@ -71,7 +71,7 @@ export function buildGeneralList(S, trip) {
     return {
       no: 0, itemId: i.id, kit, description: tradeDescription(i, trip.serialInDesc), serial: (i.serial || '').trim(), emx: i.emx || '', pieces: qty,
       weight: wkg == null ? null : round2(fromKg(wkg * qty, wu)), value: uv == null ? null : round2(uv * qty), unitValue: uv,
-      currency: i.currency || cur, origin: (i.origin || '').trim(), usesCurrent: i.currentValue != null, issues: itemIssues(i, cur),
+      currency: i.currency || cur, origin: (i.origin || '').trim(), usesCurrent: i.currentValue != null, valueAsOf: i.valueAsOf || '', issues: itemIssues(i, cur),
       sub: false, partType: partTypeOf(i), parentItemId: i.parentId && inTrip.has(i.parentId) ? i.parentId : '', note: '', folded: [],
     };
   };
@@ -154,7 +154,7 @@ export function generalListCSV(gl, trip) {
 // ---------- inventory CSV ----------
 export const INV_COLS = [
   ['id', 'id'], ['name', 'name'], ['category', 'category'], ['make', 'make'], ['model', 'model'], ['serial', 'serial'], ['Electromaxx #', 'emx'], ['qty', 'qty'],
-  ['status', 'status'], ['purchase_date', 'purchaseDate'], ['purchase_price', 'price'], ['currency', 'currency'], ['current_value', 'currentValue'],
+  ['status', 'status'], ['purchase_date', 'purchaseDate'], ['purchase_price', 'price'], ['currency', 'currency'], ['current_value', 'currentValue'], ['Value as of', 'valueAsOf'],
   ['vendor', 'vendor'], ['country_of_origin', 'origin'], ['weight', 'weight'], ['weight_unit', 'weightUnit'], ['tags', 'tags'], ['notes', 'notes'],
   ['Parent Electromaxx #', 'parentEmx'], ['Parent serial', 'parentSerial'], ['Part type', 'partType'],
 ];
@@ -163,7 +163,7 @@ const ALIASES = {
   serial: ['serial', 'serial number', 'serial no', 's/n', 'sn'],
   emx: ['electromaxx #', 'electromaxx', 'electromaxx no', 'electromaxx no.', 'electromaxx number', 'electromaxx_no', 'electromaxx gear number', 'electromaxx gear #', 'emx', 'emx #', 'emx no', 'gear number', 'gear #', 'asset tag', 'asset #', 'asset number', 'asset no', 'barcode'], qty: ['qty', 'quantity', 'pieces', 'number of pieces'], status: ['status'],
   purchaseDate: ['purchase_date', 'purchase date', 'date purchased', 'date'], price: ['purchase_price', 'purchase price', 'price', 'cost'],
-  currency: ['currency'], currentValue: ['current_value', 'current value', 'value', 'fair market value', 'fmv'], vendor: ['vendor', 'seller', 'store', 'supplier'],
+  currency: ['currency'], currentValue: ['current_value', 'current value', 'value', 'fair market value', 'fmv'], valueAsOf: ['value as of', 'value_as_of', 'value date', 'valued on', 'valued'], vendor: ['vendor', 'seller', 'store', 'supplier'],
   origin: ['country_of_origin', 'country of origin', 'origin', 'coo'], weight: ['weight'], weightUnit: ['weight_unit', 'weight unit', 'unit'],
   tags: ['tags', 'tag'], notes: ['notes', 'note', 'comments'], id: ['id'],
   parentEmx: ['parent electromaxx #', 'parent electromaxx', 'parent electromaxx no', 'parent electromaxx number', 'parent electromaxx_no', 'parent emx', 'parent emx #', 'parent asset tag', 'parent_electromaxx_no', 'part of electromaxx #', 'part of emx'],

@@ -33,7 +33,7 @@ export function rowsFromState(S, uid) {
     const parent = i.parentId && i.parentId !== i.id && itemIds.has(i.parentId) ? i.parentId : null;
     put('items', {
       id: i.id, owner_id: uid, name: i.name, category: i.category, make: i.make, model: i.model, serial: i.serial, electromaxx_no: i.emx || null, qty: i.qty, status: i.status,
-      purchase_date: nz(i.purchaseDate), price: num(i.price), currency: i.currency, current_value: num(i.currentValue), vendor: i.vendor, origin: i.origin,
+      purchase_date: nz(i.purchaseDate), price: num(i.price), currency: i.currency, current_value: num(i.currentValue), value_as_of: nz(i.valueAsOf), vendor: i.vendor, origin: i.origin,
       weight: num(i.weight), weight_unit: i.weightUnit, notes: i.notes, tags: i.tags.slice(),
       parent_id: parent, part_type: parent ? (i.partType === 'installed' ? 'installed' : 'accessory') : null,
       fmv_value: i.fmv ? i.fmv.value : null, fmv_low: i.fmv ? i.fmv.low : null, fmv_high: i.fmv ? i.fmv.high : null, fmv_count: i.fmv ? i.fmv.count : null,
@@ -59,7 +59,7 @@ export function rowsFromState(S, uid) {
   return out;
 }
 
-const fmvSrc = j => (Array.isArray(j) ? { sources: j, pick: 'google_new', bySource: {} } : j && typeof j === 'object' ? { sources: j.links || [], pick: j.pick, bySource: { ebay_sold: j.ebay_sold, google_new: j.google_new } } : { sources: [], bySource: {} });
+const fmvSrc = j => (Array.isArray(j) ? { sources: j, pick: 'google_new', bySource: {} } : j && typeof j === 'object' ? { sources: j.links || [], pick: j.pick, bySource: { google_ai: j.google_ai, ebay_sold: j.ebay_sold, google_new: j.google_new } } : { sources: [], bySource: {} });
 /** Rows (arrays straight from PostgREST) → sanitized app state. */
 export function stateFromRows(R) {
   const settings = Store.defaultSettings();
@@ -72,7 +72,7 @@ export function stateFromRows(R) {
   const pos = (a, b) => a.position - b.position;
   const items = (R.items || []).map(r => Store.sanitizeItem({
     id: r.id, name: r.name, category: r.category, make: r.make, model: r.model, serial: r.serial, emx: r.electromaxx_no || '', qty: r.qty, status: r.status,
-    purchaseDate: r.purchase_date || '', price: num(r.price), currency: r.currency, currentValue: num(r.current_value), vendor: r.vendor, origin: r.origin,
+    purchaseDate: r.purchase_date || '', price: num(r.price), currency: r.currency, currentValue: num(r.current_value), valueAsOf: r.value_as_of ? String(r.value_as_of).slice(0, 10) : '', vendor: r.vendor, origin: r.origin,
     weight: num(r.weight), weightUnit: r.weight_unit, notes: r.notes, tags: r.tags || [], parentId: r.parent_id || '', partType: r.part_type || '',
     fmv: r.fmv_value == null ? null : { value: num(r.fmv_value), low: num(r.fmv_low), high: num(r.fmv_high), count: r.fmv_count, checkedAt: r.fmv_checked_at, query: r.fmv_query || '', ...fmvSrc(r.fmv_sources) }, created: ms(r.created_at), updated: ms(r.updated_at),
     atts: (attBy.get(r.id) || []).sort((a, b) => ms(a.added_at) - ms(b.added_at)).map(a => ({ id: a.id, name: a.name, type: a.mime, size: Number(a.size) || 0, kind: a.kind, added: ms(a.added_at), path: a.path, thumb: a.thumb_path })),

@@ -3,6 +3,8 @@ import * as F from '../js/fmv.js';
 import fs from 'node:fs';
 import * as M from '../js/cloudmap.js';
 import * as Store from '../js/store.js';
+import * as VD from '../js/valdate.js';
+import * as C from '../js/carnet.js';
 let fails = 0; const ok = (c, m) => { console.log((c ? 'PASS ' : 'FAIL ') + m); if (!c) fails++; };
 const eq = (a, b) => JSON.stringify(a) === JSON.stringify(b);
 ok(F.median([3, 1, 2]) === 2 && F.median([4, 1, 3, 2]) === 2.5 && F.median([]) === null, 'median odd/even/empty');
@@ -47,4 +49,29 @@ ok(fs.readFileSync(new URL('../js/fmv.js', import.meta.url), 'utf8') === fs.read
   const back = M.stateFromRows({ items: [{ ...r, created_at: '2026-01-01', updated_at: '2026-01-01' }] }).items[0];
   ok(JSON.stringify(back.fmv) === JSON.stringify(it.fmv), 'fmv row round-trip');
   const none = M.stateFromRows({ items: [{ ...r, fmv_value: null }] }).items[0]; ok(none.fmv === null, 'no fmv → null'); }
+{ const S1 = F.aiText({ text_blocks: [{ type: 'paragraph', snippet: 'The Apple MacBook Pro 16 M3 Max originally retailed for $3,499. A used one typically sells for $2,100 to $2,600 depending on condition.' }, { type: 'list', list: [{ snippet: 'Excellent: $2,500' }] }], references: [{ title: 'r', source: 'Swappa', link: 'https://swappa.com/x' }, { title: 'bad', link: 'http://x' }] });
+  const v = F.parseAiValue(S1); ok(v.median === 2350 && v.low === 2100 && v.high === 2600 && /used one/.test(v.quote), 'AI: range in used sentence → midpoint, skips retail $3,499: ' + JSON.stringify(v));
+  ok(F.parseAiValue(F.aiText({ text_blocks: [{ snippet: 'Used units are worth about $1.2k.' }] })).median === 1200, 'AI: single $1.2k amount');
+  ok(F.parseAiValue(F.aiText({ text_blocks: [{ snippet: 'Fair market value is roughly $800–$950 used.' }] })).median === 875, 'AI: en-dash range');
+  ok(F.parseAiValue(F.aiText({ text_blocks: [{ snippet: 'Prices vary widely.' }] })).median === null, 'AI: no amount → null + quote kept');
+  ok(F.parseAiValue(F.aiText({ ai_overview: { text_blocks: [{ snippet: 'Used: $300-$400.' }] } })).median === 350, 'AI Overview fallback shape');
+  ok(F.aiRefs({ references: [{ title: 'r', source: 'Swappa', link: 'https://swappa.com/x' }, { link: 'http://x' }] }).length === 1, 'aiRefs https only');
+  ok(F.aiQuery('Apple MacBook Pro') === 'What is the fair market value of a used Apple MacBook Pro in USD?', 'aiQuery wording');
+  ok(F.suggest({ google_ai: { median: 2350 }, ebay_sold: { median: 2000, count: 5 } }) === 'google_ai' && F.suggest({ google_ai: { median: null }, ebay_sold: { median: 2000, count: 5 }, google_new: { median: 3000 } }) === 'ebay_sold', 'priority: AI, then eBay ≥3, then Shopping');
+  ok(JSON.stringify(F.DEFAULT_SOURCES) === '["google_ai"]' && F.searchesPerItem(F.SOURCES) === 3, 'default source AI only; 3 searches with all'); }
+{ const now = new Date(2026, 9, 12);
+  ok(VD.todayISO(now) === '2026-10-12', 'todayISO local');
+  let a = VD.valueAge({ currentValue: 100, valueAsOf: '2026-07-12' }, now); ok(a.state === 'fresh' && a.label === 'valued 2026-07-12 · 3 mo ago', 'fresh label ' + a.label);
+  a = VD.valueAge({ currentValue: 100, valueAsOf: '2025-10-12' }, now); ok(a.state === 'fresh' && a.days === 365, 'exactly 365 days is still fresh');
+  a = VD.valueAge({ currentValue: 100, valueAsOf: '2025-10-11' }, now); ok(a.state === 'stale' && /^value >1 yr old/.test(a.label), 'older than a year → stale');
+  ok(VD.valueAge({ currentValue: 100 }, now).state === 'stale' && VD.valueAge({ currentValue: 100 }, now).label === 'no value date', 'value without date → stale');
+  ok(VD.valueAge({ currentValue: null, price: null }, now).state === 'none', 'no value → none (not flagged)');
+  a = VD.valueAge({ price: 500, purchaseDate: '2026-09-01' }, now); ok(a.state === 'fresh' && a.source === 'purchase' && /^purchased/.test(a.label), 'price-only falls back to purchase date');
+  ok(VD.valueAge({ currentValue: 0, valueAsOf: '2026-10-12' }, now).label === 'valued 2026-10-12 · today', 'zero value still dated, today');
+  ok(VD.ago(10) === '10 d ago' && VD.ago(800) === '2 yr ago', 'ago()');
+  const S = Store.emptyState(), it = Store.makeItem(S.settings); Object.assign(it, { name: 'X', currentValue: 5, valueAsOf: '2026-01-02' }); S.items.push(it);
+  const r = [...M.rowsFromState(S, 'u').items.values()][0]; ok(r.value_as_of === '2026-01-02', 'value_as_of → row');
+  ok(M.stateFromRows({ items: [{ ...r, value_as_of: '2026-01-02' }] }).items[0].valueAsOf === '2026-01-02', 'value_as_of round-trip');
+  ok(Store.sanitizeItem({ valueAsOf: '12/1/2026' }).valueAsOf === '', 'non-ISO date dropped');
+  ok(C.INV_COLS.some(([h, k]) => h === 'Value as of' && k === 'valueAsOf'), 'inventory CSV has Value as of column'); }
 console.log(fails ? `${fails} FAILED` : 'ALL FMV TESTS PASS'); process.exit(fails ? 1 : 0);

@@ -11,8 +11,9 @@ import * as Emx from './emx.js';
 import * as Scan from './scan.js';
 import * as P from './parts.js';
 import * as Fmv from './fmv.js';
+import * as VD from './valdate.js';
 
-const APP_VERSION = '2.3.0';
+const APP_VERSION = '2.4.0';
 const $ = (sel, el = document) => el.querySelector(sel);
 const $$ = (sel, el = document) => [...el.querySelectorAll(sel)];
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -71,6 +72,7 @@ const carnetErrs = i => C.itemIssues(i, S.settings.currency).filter(x => x.level
 const inService = i => i.status === 'active' || i.status === 'repair';
 const itemById = id => S.items.find(i => i.id === id);
 const parentOf = i => (i && i.parentId ? itemById(i.parentId) : null);
+const valCls = i => ({ fresh: 'val-fresh', stale: 'val-stale' }[VD.valueAge(i).state] || '');
 const lineVal = i => (C.unitValue(i) || 0) * (i.qty || 1);
 const PT_LABEL = { installed: 'installed', accessory: 'accessory' };
 
@@ -204,7 +206,7 @@ function gearViewHTML() {
   <div class="toolbar">
     <div class="search has-scan"><input id="q" class="inp" type="search" placeholder="Search name, serial, Electromaxx #, tag…" value="${esc(ui.q)}" autocomplete="off" aria-label="Search"><button class="scanbtn" data-act="scanSearch" aria-label="Scan an Electromaxx sticker" title="Scan an Electromaxx sticker">${SCAN_ICON}</button></div>
     <select class="inp" data-filter="fCat" aria-label="Category">${opt('', 'All categories', ui.fCat)}${cats.map(c => opt(c, c, ui.fCat)).join('')}</select>
-    <select class="inp" data-filter="fStatus" aria-label="Status">${opt('', 'Any status', ui.fStatus)}${opt('service', 'In service (active + repair)', ui.fStatus)}${Store.STATUSES.map(([k, l]) => opt(k, l, ui.fStatus)).join('')}<optgroup label="Electromaxx #">${opt('emx:has', 'Has Electromaxx #', ui.fStatus)}${opt('emx:none', 'No Electromaxx # yet', ui.fStatus)}</optgroup></select>
+    <select class="inp" data-filter="fStatus" aria-label="Status">${opt('', 'Any status', ui.fStatus)}${opt('service', 'In service (active + repair)', ui.fStatus)}${Store.STATUSES.map(([k, l]) => opt(k, l, ui.fStatus)).join('')}<optgroup label="Value">${opt('val:stale', 'Value >1 yr old / no date', ui.fStatus)}${opt('val:fresh', 'Value current (≤ 1 yr)', ui.fStatus)}</optgroup><optgroup label="Electromaxx #">${opt('emx:has', 'Has Electromaxx #', ui.fStatus)}${opt('emx:none', 'No Electromaxx # yet', ui.fStatus)}</optgroup></select>
     <select class="inp" data-filter="fTag" aria-label="Tag">${opt('', tags.length ? 'All tags' : 'No tags yet', ui.fTag)}${tags.map(t => opt(t, '#' + t, ui.fTag)).join('')}</select>
     <select class="inp" data-filter="sort" aria-label="Sort">${[['name', 'Sort: Name A–Z'], ['category', 'Sort: Category'], ['value', 'Sort: Value ↓'], ['date', 'Sort: Purchased ↓'], ['emx', 'Sort: Electromaxx #'], ['updated', 'Sort: Recently edited'], ['missing', 'Sort: Missing carnet data']].map(([k, l]) => opt(k, l, ui.sort)).join('')}</select>
   </div>
@@ -214,7 +216,7 @@ function filteredItems() {
   const toks = ui.q.toLowerCase().split(/\s+/).filter(Boolean);
   let list = S.items.filter(i => {
     if (ui.fCat && i.category !== ui.fCat) return false;
-    if (ui.fStatus === 'emx:has' ? !i.emx : ui.fStatus === 'emx:none' ? !!i.emx : ui.fStatus === 'service' ? !inService(i) : ui.fStatus && i.status !== ui.fStatus) return false;
+    if (ui.fStatus === 'val:stale' ? !VD.isStale(i) : ui.fStatus === 'val:fresh' ? VD.valueAge(i).state !== 'fresh' : ui.fStatus === 'emx:has' ? !i.emx : ui.fStatus === 'emx:none' ? !!i.emx : ui.fStatus === 'service' ? !inService(i) : ui.fStatus && i.status !== ui.fStatus) return false;
     if (ui.fTag && !i.tags.includes(ui.fTag)) return false;
     if (toks.length) { const hay = [i.name, i.make, i.model, i.serial, i.emx, i.emx && 'emx' + i.emx, i.vendor, i.notes, i.category, i.origin, ...i.tags, ...kitsOf(i.id).map(k => k.name)].join(' ').toLowerCase(); if (!toks.every(t => hay.includes(t))) return false; }
     return true;
@@ -242,7 +244,7 @@ function gearRowHTML(i, { depth = 0, kids = null, flat = false } = {}) {
       ${partsTag || partOf || ptTag ? `<div class="g-parts">${ptTag}${partOf}${partsTag}</div>` : ''}
       ${flags ? `<div class="g-flags">${flags}</div>` : ''}</div>
     <div class="g-meta"><div>${esc(i.category)}</div><div class="row">${kits.map(k => `<span class="tag kit">▣ ${esc(k.name)}</span>`).join('')}${i.tags.map(t => `<span class="tag">#${esc(t)}</span>`).join('')}</div>${i.origin ? `<div>Origin: ${esc(i.origin)}</div>` : ''}</div>
-    <div class="g-val">${v == null ? '<span style="color:var(--amber)">—</span>' : money(v * (i.qty || 1), i.currency)}<small>${i.qty > 1 ? `${i.qty} × ${money(v, i.currency)}` : i.currentValue != null ? 'current value' : v != null ? 'purchase' : 'no value'}</small>${vw ? `<small class="inclparts" title="Item + all its parts${vw.other ? ` (${vw.other} in another currency not included)` : ''}">${money(vw.value, vw.currency)} incl. parts</small>` : ''}${i.fmv?.checkedAt ? `<small class="fmvchk" title="Fair market value lookup">value checked ${esc(fmvDate(i.fmv.checkedAt))}</small>` : ''}</div>
+    <div class="g-val ${valCls(i)}" title="${esc(VD.valueAge(i).label)}">${v == null ? '<span style="color:var(--amber)">—</span>' : money(v * (i.qty || 1), i.currency)}<small>${i.qty > 1 ? `${i.qty} × ${money(v, i.currency)}` : i.currentValue != null ? 'current value' : v != null ? 'purchase' : 'no value'}</small>${vw ? `<small class="inclparts" title="Item + all its parts${vw.other ? ` (${vw.other} in another currency not included)` : ''}">${money(vw.value, vw.currency)} incl. parts</small>` : ''}${v != null ? `<small class="vage">${VD.valueAge(i).state === 'fresh' ? '✓' : '⚠'} ${esc(VD.valueAge(i).label)}</small>` : ''}</div>
   </button>`;
 }
 function renderGearList() {
@@ -292,9 +294,9 @@ function openItemEditor(item, isNew = false, { returnTo = null } = {}) {
       ${f('price', 'Purchase price (each)', 'type="number" inputmode="decimal" step="0.01" min="0" placeholder="0.00"')}
       <label class="fld"><span>Currency</span><select class="inp" data-f="currency">${[...new Set([d.currency, ...Store.CURRENCIES])].map(c => `<option ${c === d.currency ? 'selected' : ''}>${c}</option>`).join('')}</select></label>
       ${f('vendor', 'Vendor', 'placeholder="Store / seller" list="dl-vendors" autocomplete="off"')}
-      ${f('currentValue', 'Current value (each) — overrides price on carnets', 'type="number" inputmode="decimal" step="0.01" min="0" placeholder="Defaults to purchase price"', 'span2')}
+      <div class="fld span2 valfld" id="valFld"><span>Current value (each) — overrides price on carnets</span><div class="joined"><input class="inp" data-f="currentValue" value="${esc(d.currentValue ?? '')}" type="number" inputmode="decimal" step="0.01" min="0" placeholder="Defaults to purchase price" aria-describedby="valAge"><input class="inp vdate" data-f="valueAsOf" value="${esc(d.valueAsOf || '')}" type="date" aria-label="Value as of" title="Value as of"></div><small id="valAge" class="vage"></small></div>
       <div class="span2" style="align-self:center"><p class="hint">Carnets need the <b>current fair market value</b>, not what you paid. Leave blank to use the purchase price.</p>
-        <div class="row wrap" style="margin-top:6px"><button class="btn sm" type="button" data-act="fmvItem" ${readOnly() ? 'disabled' : ''}>⟳ Look up value</button><span class="hint">eBay sold + Google · you review first</span></div>
+        <div class="row wrap" style="margin-top:6px"><button class="btn sm" type="button" data-act="fmvItem" ${readOnly() ? 'disabled' : ''}>⟳ Look up value</button><span class="hint">Google AI (default) · you review first</span></div>
         <p class="hint fmvinfo" id="fmvInfo"></p></div>
     </div></div>
     <div class="section"><div class="lbl">Carnet / customs</div><div class="grid4">
@@ -315,8 +317,20 @@ function openItemEditor(item, isNew = false, { returnTo = null } = {}) {
     ${dataLists()}
     <div class="sheet-f">${isNew ? '' : '<button class="btn danger" data-act="deleteItem">Delete</button><button class="btn ghost" data-act="dupItem">Duplicate</button>'}<span class="grow"></span><button class="btn ghost" data-act="cancelEdit">Cancel</button><button class="btn primary" data-act="saveItem">Save</button></div>`,
   { cls: 'wide', backdrop: false, onClose: () => { const rt = ui.edit?.returnTo; discardEdit(); if (rt) reopenItem(rt); } });
-  renderAtts(); emxHint(); renderPartOf(); renderParts(); renderFmvInfo();
+  renderAtts(); emxHint(); renderPartOf(); renderParts(); renderFmvInfo(); renderValAge();
   if (isNew && !d.emx) $('[data-f=name]', o)?.focus({ preventScroll: true });
+}
+// ----- value freshness (v2.4) -----
+function renderValAge() {
+  const f = $('#valFld'), el = $('#valAge'); if (!f || !ui.edit) return;
+  const d = ui.edit.d, a = VD.valueAge({ ...d, currentValue: Store.parseNum(d.currentValue), price: Store.parseNum(d.price) });
+  f.classList.toggle('val-fresh', a.state === 'fresh'); f.classList.toggle('val-stale', a.state === 'stale');
+  el.textContent = a.state === 'none' ? 'Value as of: set when you enter or look up a value' : `${a.state === 'fresh' ? '✓' : '⚠'} ${a.label}${a.state === 'stale' ? ' — update before a carnet' : ''}`;
+}
+/** Items on a trip (every line incl. installed sub-lines and folded parts) whose value is stale. */
+function staleOnTrip(t) {
+  const gl = C.buildGeneralList(S, t), ids = [...new Set(gl.lines.flatMap(l => [l.itemId, ...(l.folded || [])]))];
+  return ids.map(itemById).filter(i => i && VD.isStale(i));
 }
 // ----- fair market value (v2.3) -----
 const FMV_SECRETS_URL = 'https://supabase.com/dashboard/project/ggtkglxvuxvmuqtpvlgs/functions/secrets';
@@ -326,10 +340,10 @@ const FMV_ERR = {
   bad_key: 'SerpApi rejected the API key — check the SERPAPI_KEY secret.', quota: 'SerpApi search quota used up for this month.',
   mfa_required: 'Two-factor verification is required — sign out and back in.', unauthorized: 'Session expired — sign in again.',
   timeout: 'SerpApi timed out — retry.', upstream: 'SerpApi error — retry later.', skipped: 'Skipped (lookups stopped).', bad_item: 'Empty search text.',
-  network: 'Could not reach the lookup function.', no_results: 'No listings found', sold_unavailable: 'Sold listings unavailable (eBay restricts them)',
+  network: 'Could not reach the lookup function.', no_results: 'No listings found', no_number: 'No dollar figure in the answer', sold_unavailable: 'Sold listings unavailable (eBay restricts them)',
 };
 const fmvErrText = c => FMV_ERR[c] || esc(c || 'Lookup failed');
-let fmvSrcPref = ['ebay_sold', 'google_new'];
+let fmvSrcPref = Fmv.DEFAULT_SOURCES.slice();
 function setFmvButtons() { $$('[data-act=fmvOpen],[data-act=fmvItem]').forEach(b => { b.disabled = readOnly(); b.title = readOnly() ? 'Needs a connection' : ''; }); }
 /** Call fmv-lookup for [{item_id, query}] (≤ MAX_PER_CALL). Returns { results } or throws { code }. */
 async function fmvInvoke(list, sources) {
@@ -365,25 +379,28 @@ async function fmvRunRows(rows, sources, onProgress) {
   }
   return null;
 }
-const FMV_NOTE = '<p class="hint fmvnote">⚠ <b>eBay sold</b> prices are what used gear actually sold for — suggested when there are at least 3. <b>Google Shopping</b> mostly lists <b>new retail</b> prices, so used gear may be overstated. Pick either, or type your own value. Carnets want the current fair market value.</p>';
-function fmvOpen() {
+const FMV_NOTE = '<p class="hint fmvnote">⚠ <b>Google AI</b> answers are suggested first when they contain a dollar figure — read the quote, AI can be wrong. <b>eBay sold</b> prices are what used gear actually sold for — suggested next when there are at least 3. <b>Google Shopping</b> mostly lists <b>new retail</b> prices, so used gear may be overstated. Pick either, or type your own value. Carnets want the current fair market value.</p>';
+function fmvOpen(preset = null) {
   const all = S.items, filt = filteredItems(), noVal = S.items.filter(i => i.currentValue == null);
   const o = openLayer(`<div class="sheet-h"><div class="title">⟳ UPDATE VALUES</div><button class="iconbtn" data-close aria-label="Close">✕</button></div>
     <div class="section"><div class="lbl">Which gear</div>
-      <label class="radio"><input type="radio" name="fmvScope" value="all" checked> All gear <small>(${all.length})</small></label>
+      ${preset ? `<label class="radio"><input type="radio" name="fmvScope" value="preset" checked> ${esc(preset.label)} <small>(${preset.items.length})</small></label>` : ''}
+      <label class="radio"><input type="radio" name="fmvScope" value="all" ${preset ? '' : 'checked'}> All gear <small>(${all.length})</small></label>
       <label class="radio"><input type="radio" name="fmvScope" value="filtered" ${listFiltered() ? '' : 'disabled'}> Current filter / search <small>(${filt.length})</small></label>
       <label class="radio"><input type="radio" name="fmvScope" value="novalue"> Items without a current value <small>(${noVal.length})</small></label>
       <label class="radio"><input type="checkbox" id="fmvInstalled"> Include parts marked <b>installed</b> (RAM, drives…)</label>
       <label class="radio"><input type="checkbox" id="fmvInactive"> Include sold / retired gear</label></div>
     <div class="section"><div class="lbl">Price sources</div>
+      <label class="radio"><input type="checkbox" data-fmvsrc="google_ai" ${fmvSrcPref.includes('google_ai') ? 'checked' : ''}> Google AI <small>(asks “fair market value of a used …”; range → midpoint)</small></label>
       <label class="radio"><input type="checkbox" data-fmvsrc="ebay_sold" ${fmvSrcPref.includes('ebay_sold') ? 'checked' : ''}> eBay sold listings <small>(used — what it actually sold for)</small></label>
       <label class="radio"><input type="checkbox" data-fmvsrc="google_new" ${fmvSrcPref.includes('google_new') ? 'checked' : ''}> Google Shopping <small>(mostly new retail)</small></label></div>
     <p class="hint" id="fmvCount"></p>
-    <p class="hint">Each source costs <b>1 SerpApi search per item</b> (both = 2 per item); the free plan allows about <b>100 searches a month</b>. Nothing changes until you review and apply.</p>
+    <p class="hint">Each source costs <b>1 SerpApi search per item</b> (all three = 3; Google AI can use a 2nd search when it falls back to the AI Overview); the free plan allows about <b>100 searches a month</b>. Nothing changes until you review and apply.</p>
     <div class="row"><button class="btn ghost grow" data-close>Cancel</button><button class="btn primary grow" id="fmvGo">Look up values</button></div>`, { cls: 'small' });
   const srcs = () => $$('[data-fmvsrc]:checked', o).map(x => x.dataset.fmvsrc);
   const pick = () => {
     const sc = $('input[name=fmvScope]:checked', o).value, inst = $('#fmvInstalled', o).checked, inact = $('#fmvInactive', o).checked;
+    if (sc === 'preset') return preset.items;
     return (sc === 'filtered' ? filt : sc === 'novalue' ? noVal : all).filter(i => (inst || P.partTypeOf(i) !== 'installed') && (inact || inService(i)));
   };
   const upd = () => { const n = pick().length, k = Fmv.searchesPerItem(srcs()), m = n * k; $('#fmvCount', o).innerHTML = `<b>${plural(n, 'item')}</b> × ${k} = <b>${m} search${m === 1 ? '' : 'es'}</b>`; $('#fmvGo', o).disabled = !n || !k; };
@@ -403,16 +420,17 @@ function fmvReview(rows, single = null, sources = fmvSrcPref) {
   const o = openLayer(`<div class="sheet-h"><div class="title">⟳ REVIEW VALUES</div><button class="iconbtn" data-close aria-label="Close">✕</button></div>
     <div id="fmvProg" class="fmvprog"><div class="bar"><i style="width:0%"></i></div><span>Looking up 0 / ${rows.length}…</span></div>
     <div id="fmvMsg"></div>${FMV_NOTE}
-    <div class="fmvwrap"><table class="fmvt"><thead><tr><th><input type="checkbox" id="fmvAll" aria-label="Select all"></th><th>Item</th><th class="r">Current</th>${sources.includes('ebay_sold') ? '<th>eBay sold</th>' : ''}${sources.includes('google_new') ? '<th>Google new</th>' : ''}<th>Use</th><th>Search</th></tr></thead><tbody id="fmvBody"></tbody></table></div>
+    <div class="fmvwrap"><table class="fmvt"><thead><tr><th><input type="checkbox" id="fmvAll" aria-label="Select all"></th><th>Item</th><th class="r">Current</th>${sources.includes('google_ai') ? '<th>Google AI</th>' : ''}${sources.includes('ebay_sold') ? '<th>eBay sold</th>' : ''}${sources.includes('google_new') ? '<th>Google new</th>' : ''}<th>Use</th><th>Search</th></tr></thead><tbody id="fmvBody"></tbody></table></div>
     <div class="sheet-f"><span class="hint grow" id="fmvSel"></span><button class="btn ghost" data-close>Cancel</button><button class="btn primary" id="fmvApply" disabled>Apply selected</button></div>`, { cls: 'wide' });
   o._rows = rows;
   const srcCell = (r, k) => {
     const x = r.res; if (!x || r.busy) return '<td class="sc"><span class="hint">…</span></td>';
     const b = x[k]; if (!b) return `<td class="sc">${x.error ? `<span class="fmverr">${fmvErrText(x.error)}</span>` : '<span class="hint">—</span>'}</td>`;
-    if (b.error || b.median == null) return `<td class="sc"><span class="hint">${b.error ? fmvErrText(b.error) : 'No prices found'}</span></td>`;
+    const quote = b.quote ? `<q class="aiq">${esc(b.quote)}</q>` : '';
+    if (b.error || b.median == null) return `<td class="sc"><span class="hint">${b.error ? fmvErrText(b.error) : 'No prices found'}</span>${quote}</td>`;
     const links = (b.sources || []).map(s => `<a href="${esc(s.link)}" target="_blank" rel="noopener noreferrer" title="${esc(s.title)}">${esc(s.source || 'link')} ${money(s.price, 'USD', false)}</a>`).join('');
     return `<td class="sc ${x.suggested === k ? 'sugg' : ''}"><label class="pickv"><input type="radio" name="fmvp${r.ix}" value="${k}" ${r.pick === k ? 'checked' : ''}> <b>${money(Fmv.applyValue(b.median), 'USD', false)}</b>${x.suggested === k ? ' <span class="star">★ suggested</span>' : ''}</label>
-      <small>${money(b.low, 'USD', false)}–${money(b.high, 'USD', false)} · ${plural(b.count, 'price')}</small>${links}</td>`;
+      <small>${b.low !== b.high ? `${money(b.low, 'USD', false)}–${money(b.high, 'USD', false)}` : 'single figure'}${k === 'google_ai' ? (b.via === 'ai_overview' ? ' · AI Overview' : ' · AI Mode') : ` · ${plural(b.count, 'price')}`}</small>${quote}${links}</td>`;
   };
   const rowHTML = (r, ix) => {
     r.ix = ix; const it = item(r); if (!it) return '';
@@ -422,7 +440,7 @@ function fmvReview(rows, single = null, sources = fmvSrcPref) {
       <td><input type="checkbox" data-fmvck ${ok ? '' : 'disabled'} ${r.checked && ok ? 'checked' : ''} aria-label="Apply"></td>
       <td class="nm">${esc(itemTitle(it))}${it.fmv?.checkedAt ? `<small>checked ${esc(fmvDate(it.fmv.checkedAt))}</small>` : ''}</td>
       <td class="r">${it.currentValue != null ? money(Store.parseNum(it.currentValue), it.currency, false) : '<span class="hint">—</span>'}</td>
-      ${sources.includes('ebay_sold') ? srcCell(r, 'ebay_sold') : ''}${sources.includes('google_new') ? srcCell(r, 'google_new') : ''}
+      ${sources.includes('google_ai') ? srcCell(r, 'google_ai') : ''}${sources.includes('ebay_sold') ? srcCell(r, 'ebay_sold') : ''}${sources.includes('google_new') ? srcCell(r, 'google_new') : ''}
       <td class="use">${done && usd(it) ? `<label class="pickv"><input type="radio" name="fmvp${ix}" value="manual" ${r.pick === 'manual' ? 'checked' : ''}> Own</label><input class="inp sm" data-fmvcustom type="number" min="0" step="1" inputmode="numeric" value="${esc(r.custom ?? '')}" placeholder="$" aria-label="Your value"><div class="usev">${ok ? `→ <b>${money(chosen(r), 'USD', false)}</b>` : ''}</div>` : ''}${note}</td>
       <td class="q"><div class="joined"><input class="inp" data-fmvq value="${esc(r.query)}" maxlength="${Fmv.MAX_QUERY}" aria-label="Search text"><button class="btn sm ghost" data-fmvretry title="Search again (${Fmv.searchesPerItem(sources)} search${Fmv.searchesPerItem(sources) === 1 ? '' : 'es'})">↻</button></div></td></tr>`;
   };
@@ -463,15 +481,15 @@ function fmvReview(rows, single = null, sources = fmvSrcPref) {
       const sel = rows.filter(r => r.checked && fmvOk(r)); let n = 0;
       for (const r of sel) {
         const it = item(r); if (!it) continue; const x = r.res, b = r.pick !== 'manual' ? x[r.pick] : null, v = chosen(r);
-        const bySource = Object.fromEntries(Fmv.SOURCES.filter(k => has(x, k)).map(k => [k, { median: x[k].median, low: x[k].low, high: x[k].high, count: x[k].count, sources: x[k].sources }]));
-        it.currentValue = v;
+        const bySource = Object.fromEntries(Fmv.SOURCES.filter(k => has(x, k)).map(k => [k, { median: x[k].median, low: x[k].low, high: x[k].high, count: x[k].count, sources: x[k].sources, quote: x[k].quote }]));
+        it.currentValue = v; it.valueAsOf = VD.todayISO();
         it.fmv = Store.sanitizeFmv({ value: b ? b.median : v, low: b ? b.low : null, high: b ? b.high : null, count: b ? b.count : 0, pick: r.pick,
           checkedAt: x.checked_at || new Date().toISOString(), query: r.query, sources: b ? b.sources : [], bySource });
         if (!single) it.updated = Date.now();
         n++;
       }
       closeLayer(o, true);
-      if (single) { const inp = $('[data-f=currentValue]'); if (inp) inp.value = single.d.currentValue; renderFmvInfo(); toast('Value filled in — Save to keep it', 2400); }
+      if (single) { const inp = $('[data-f=currentValue]'); if (inp) inp.value = single.d.currentValue; const dt = $('[data-f=valueAsOf]'); if (dt) dt.value = single.d.valueAsOf; renderFmvInfo(); renderValAge(); toast('Value filled in — Save to keep it', 2400); }
       else { persist(); render(); toast(`Updated ${plural(n, 'value')}`); }
     }
   });
@@ -479,7 +497,7 @@ function fmvReview(rows, single = null, sources = fmvSrcPref) {
 function renderFmvInfo() {
   const el = $('#fmvInfo'); if (!el || !ui.edit) return; const f = ui.edit.d.fmv; if (!f) { el.innerHTML = ''; return; }
   const part = k => { const b = f.bySource?.[k]; return b ? `${Fmv.SOURCE_LABEL[k]} ${money(b.median, 'USD', false)} (${money(b.low, 'USD', false)}–${money(b.high, 'USD', false)}, ${plural(b.count, 'price')})` : ''; };
-  el.innerHTML = `Value checked ${esc(fmvDate(f.checkedAt))} · used ${f.pick === 'manual' ? 'your own value' : esc(Fmv.SOURCE_LABEL[f.pick] || '')}${['ebay_sold', 'google_new'].map(part).filter(Boolean).map(t => ' · ' + t).join('')}${f.sources?.length ? '<br>' + f.sources.filter(s => s.link).map(s => `<a href="${esc(s.link)}" target="_blank" rel="noopener noreferrer">${esc(s.source || 'link')}</a>`).join(' ') : ''}`;
+  el.innerHTML = `Value checked ${esc(fmvDate(f.checkedAt))} · used ${f.pick === 'manual' ? 'your own value' : esc(Fmv.SOURCE_LABEL[f.pick] || '')}${['google_ai', 'ebay_sold', 'google_new'].map(part).filter(Boolean).map(t => ' · ' + t).join('')}${f.sources?.length ? '<br>' + f.sources.filter(s => s.link).map(s => `<a href="${esc(s.link)}" target="_blank" rel="noopener noreferrer">${esc(s.source || 'link')}</a>`).join(' ') : ''}`;
 }
 function fmvItem() {
   const E = ui.edit; if (!E) return;
@@ -682,6 +700,9 @@ function tripLinesHTML() {
     <div><div class="lbl">Weight</div><div class="big">${num2(gl.totals.weight)}<span style="font-size:13px"> ${gl.weightUnit}</span></div></div><div><div class="lbl">Value</div><div class="big">${money(gl.totals.value, cur, false)}</div></div></div>
   ${gl.totals.errors ? `<p class="note amber" id="carnetIssues">⚠ <b>${plural(gl.totals.errors, 'line')} need attention before export:</b> ${esc(parts.join(', '))}. Tap <b>Fix</b> on a row to edit the item.</p>`
     : gl.totals.lines ? '<p class="note" id="carnetIssues">✓ Every line has a serial number, value and country of origin.</p>' : ''}
+  ${(() => { const st = staleOnTrip(t); return st.length ? `<div class="note red staleban" id="staleBanner" role="alert"><div class="row between wrap"><b>⚠ ${plural(st.length, 'item')} on this trip ${st.length === 1 ? 'has a value' : 'have values'} older than a year or without a value date</b><button class="btn sm mag" data-act="fmvStale">⟳ Update values (${st.length})</button></div>
+    <ul>${st.map(i => `<li><span>${esc(itemTitle(i))}</span> <small>${esc(VD.valueAge(i).label)}</small> <button class="linkbtn" data-act="editItem" data-id="${i.id}">Fix</button></li>`).join('')}</ul>
+    <p class="hint">Customs expects the <b>current</b> fair market value. Update or confirm each value, then its date is set to today.</p></div>` : ''; })()}
   <p class="hint">Value column = <b>current value</b> if set on the item, otherwise purchase price, × pieces, in ${esc(cur)}. Customs expects current fair market value.</p>
   ${gl.lines.length ? `<div class="tablewrap"><table class="ro carnet"><thead><tr><th class="n">#</th><th>Trade description</th><th>Serial</th>${t.emxCol ? '<th>EMX #</th>' : ''}<th class="n">Pcs</th><th class="n">Wt ${gl.weightUnit}</th><th class="n">Value</th><th>Origin</th><th></th></tr></thead><tbody>
     ${gl.lines.map(l => { const errs = l.issues.filter(x => x.level === 'err'); return `<tr class="${errs.length ? 'bad' : ''} ${l.sub ? 'subline' : ''}" data-no="${l.no}">
@@ -714,7 +735,12 @@ function closePaper() { const p = $('#printRoot'); p.classList.remove('show'); p
 async function guardExport(what) {
   const gl = C.buildGeneralList(S, trip());
   if (!gl.lines.length) { toast('Nothing on this trip yet'); return false; }
-  if (!gl.totals.errors) return true;
+  const st = staleOnTrip(trip());
+  if (gl.totals.errors && !(await guardMissing(gl, what))) return false;
+  if (!st.length) return true;
+  return confirmBox(`${plural(st.length, 'value')} out of date`, `${what} anyway`, `<p class="warn">These values are older than a year or have no value date:</p><ul class="hint">${st.slice(0, 12).map(i => `<li>${esc(itemTitle(i))} — ${esc(VD.valueAge(i).label)}</li>`).join('')}${st.length > 12 ? `<li>…and ${st.length - 12} more</li>` : ''}</ul>`, 'primary');
+}
+function guardMissing(gl, what) {
   const c = gl.counts, li = [c.serial && `${c.serial} without a serial number`, c.value && `${c.value} without a value`, c.origin && `${c.origin} without a country of origin`, c.currency && `${c.currency} valued in another currency`].filter(Boolean);
   return confirmBox(`${plural(gl.totals.errors, 'line')} incomplete`, `${what} anyway`, `<p class="warn">Customs and carnet issuers expect every line to have these. Missing:</p><ul class="hint">${li.map(x => `<li>${esc(x)}</li>`).join('')}</ul>`, 'primary');
 }
@@ -893,7 +919,7 @@ async function scanToFind() {
 }
 // Actions that change data — blocked while offline / read-only.
 const MUTATING = new Set(['newItem', 'saveItem', 'dupItem', 'deleteItem', 'addPart', 'linkPart', 'linkPick', 'unlinkPart', 'unlinkSelf', 'removeAtt', 'newKit', 'saveKit', 'deleteKit', 'newTrip', 'deleteTrip', 'toggleTripKit',
-  'pickTripItems', 'saveTripItems', 'removeTripItem', 'excludeLine', 'restoreLine', 'addCategory', 'delCategory', 'eraseAll', 'uploadLegacy', 'fmvOpen', 'fmvItem']);
+  'pickTripItems', 'saveTripItems', 'removeTripItem', 'excludeLine', 'restoreLine', 'addCategory', 'delCategory', 'eraseAll', 'uploadLegacy', 'fmvOpen', 'fmvItem', 'fmvStale']);
 
 const ACTIONS = {
   closeTop: () => closeLayer(),
@@ -969,6 +995,7 @@ const ACTIONS = {
   removeAtt: async el => { const E = ui.edit, a = E.d.atts.find(x => x.id === el.dataset.id); if (!a) return; if (!(await confirmBox(`Remove ${a.kind} “${a.name}”?`, 'Remove'))) return; E.d.atts = E.d.atts.filter(x => x !== a); E.pendingDel.push(a.id); (E.removed = E.removed || []).push(a); renderAtts(); },
   scanSearch: () => scanToFind(),
   fmvOpen: () => fmvOpen(),
+  fmvStale: () => { const t = trip(); if (!t) return; const st = staleOnTrip(t); if (!st.length) return toast('All values on this trip are current'); fmvOpen({ label: `Out-of-date values on “${t.name}”`, items: st }); },
   fmvItem: () => fmvItem(),
   scanEmx: async () => {
     const r = await Scan.scan({ title: 'SCAN STICKER FOR THIS ITEM' }); if (!r || !ui.edit) return;
@@ -1046,13 +1073,15 @@ document.addEventListener('input', e => {
   const el = e.target;
   if (el.id === 'q') { ui.q = el.value; return renderGearList(); }
   if (el.dataset.f === 'emx' && ui.edit) { const v = el.value.replace(/\D/g, '').slice(0, 6); if (v !== el.value) el.value = v; ui.edit.d.emx = v; return emxHint(); }
+  if (el.dataset.f === 'currentValue' && ui.edit) { ui.edit.d.currentValue = el.value; if (el.value !== '') { ui.edit.d.valueAsOf = VD.todayISO(); const dt = $('[data-f=valueAsOf]'); if (dt) dt.value = ui.edit.d.valueAsOf; } return renderValAge(); }
+  if (['valueAsOf', 'price', 'purchaseDate'].includes(el.dataset.f) && ui.edit) { ui.edit.d[el.dataset.f] = el.value; return renderValAge(); }
   if (el.dataset.f && ui.edit) { ui.edit.d[el.dataset.f] = el.value; const fl = el.closest('.fld'); if (fl && (el.dataset.f === 'serial' || el.dataset.f === 'origin')) fl.classList.toggle('need', !el.value.trim()); return; }
   if (el.hasAttribute('data-pickfilter')) { const q = el.value.toLowerCase().trim(); $$('.pick', el.closest('.modal-card')).forEach(p => { p.style.display = !q || p.dataset.s.includes(q) ? '' : 'none'; }); }
 });
 document.addEventListener('change', async e => {
   const el = e.target;
   if (el.dataset.filter) { ui[el.dataset.filter] = el.value; return renderGearList(); }
-  if (el.dataset.f && ui.edit) { ui.edit.d[el.dataset.f] = el.value; return; }
+  if (el.dataset.f && ui.edit) { ui.edit.d[el.dataset.f] = el.value; if (['valueAsOf', 'purchaseDate', 'price'].includes(el.dataset.f)) renderValAge(); return; }
   if (el.closest('.pick')) { el.closest('.pick').classList.toggle('on', el.checked); return; }
   if (el.dataset.attkind && ui.edit) {
     const files = [...el.files]; el.value = ''; if (!files.length) return;

@@ -25,7 +25,7 @@ export function emptyState() { return { v: 1, items: [], kits: [], trips: [], se
 export function makeItem(settings = defaultSettings()) {
   return {
     id: uid('itm'), name: '', category: settings.categories[0] || 'Other', make: '', model: '', serial: '', emx: '', qty: 1,
-    purchaseDate: '', price: null, currency: settings.currency || 'USD', currentValue: null, vendor: '', origin: '',
+    purchaseDate: '', price: null, currency: settings.currency || 'USD', currentValue: null, valueAsOf: '', vendor: '', origin: '',
     weight: null, weightUnit: settings.weightUnit || 'kg', notes: '', tags: [], status: 'active', atts: [],
     fmv: null, // v2.3 last applied value lookup {value, low, high, count, checkedAt, sources[], query}
     parentId: '', partType: '', // v2.2 parts: parent item id ('' = standalone), 'installed' | 'accessory'
@@ -56,9 +56,9 @@ export function sanitizeFmv(f) {
   const t = Date.parse(f.checkedAt);
   return { value: numOrNull(f.value), low: numOrNull(f.low), high: numOrNull(f.high), count: Math.max(0, Math.round(numOrNull(f.count) || 0)),
     checkedAt: Number.isFinite(t) ? new Date(t).toISOString() : null, query: s(f.query, 200),
-    pick: ['ebay_sold', 'google_new', 'manual'].includes(f.pick) ? f.pick : 'google_new', sources: links(f.sources),
-    bySource: Object.fromEntries(['ebay_sold', 'google_new'].filter(k => f.bySource?.[k] && numOrNull(f.bySource[k].median) != null).map(k => { const b = f.bySource[k];
-      return [k, { median: numOrNull(b.median), low: numOrNull(b.low), high: numOrNull(b.high), count: Math.max(0, Math.round(numOrNull(b.count) || 0)), sources: links(b.sources) }]; })) };
+    pick: ['google_ai', 'ebay_sold', 'google_new', 'manual'].includes(f.pick) ? f.pick : 'google_new', sources: links(f.sources),
+    bySource: Object.fromEntries(['google_ai', 'ebay_sold', 'google_new'].filter(k => f.bySource?.[k] && numOrNull(f.bySource[k].median) != null).map(k => { const b = f.bySource[k];
+      return [k, { median: numOrNull(b.median), low: numOrNull(b.low), high: numOrNull(b.high), count: Math.max(0, Math.round(numOrNull(b.count) || 0)), sources: links(b.sources), ...(b.quote ? { quote: s(b.quote, 400) } : {}) }]; })) };
 }
 const links = a => (Array.isArray(a) ? a : []).slice(0, 5).map(x => ({ title: s(x?.title, 200), source: s(x?.source, 80), price: numOrNull(x?.price), link: httpsUrl(x?.link) }));
 export function sanitizeItem(i, settings = defaultSettings()) {
@@ -67,7 +67,7 @@ export function sanitizeItem(i, settings = defaultSettings()) {
   return {
     ...base, id: s(i.id, 60) || base.id, name: s(i.name, 200), category: s(i.category, 80) || base.category, make: s(i.make, 120), model: s(i.model, 120),
     serial: s(i.serial, 400), emx: normEmx(i.emx), qty: Math.max(1, Math.round(numOrNull(i.qty) || 1)), purchaseDate: /^\d{4}-\d{2}-\d{2}$/.test(i.purchaseDate || '') ? i.purchaseDate : '',
-    price: numOrNull(i.price), currency: (s(i.currency, 3) || base.currency).toUpperCase(), currentValue: numOrNull(i.currentValue),
+    price: numOrNull(i.price), currency: (s(i.currency, 3) || base.currency).toUpperCase(), currentValue: numOrNull(i.currentValue), valueAsOf: /^\d{4}-\d{2}-\d{2}$/.test(i.valueAsOf || '') ? i.valueAsOf : '',
     vendor: s(i.vendor, 120), origin: s(i.origin, 80), weight: numOrNull(i.weight), weightUnit: i.weightUnit === 'lb' ? 'lb' : 'kg',
     notes: s(i.notes, 4000), tags: splitTags(i.tags), status: st,
     parentId: s(i.parentId, 60), partType: i.parentId ? (normPartType(i.partType) || 'accessory') : '',

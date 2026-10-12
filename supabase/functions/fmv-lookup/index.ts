@@ -2,7 +2,7 @@
 // Deployed with verify_jwt = true (the gateway rejects missing/invalid JWTs with 401). Additionally requires an MFA-verified (aal2) session.
 // Secret: SERPAPI_KEY (Dashboard → Edge Functions → Secrets). The key is never returned or logged.
 // fmv.js here is a copy of /js/fmv.js (tools/test-fmv.mjs checks they are identical).
-import { parseShopping, parseEbay, sourceStats, suggest, cleanQuery, MAX_PER_CALL, SOURCES } from './fmv.js';
+import { parseShopping, parseEbay, sourceStats, suggest, cleanQuery, MAX_PER_CALL, SOURCES, DEFAULT_SOURCES, aiQuery, aiText, parseAiValue, aiRefs } from './fmv.js';
 
 const ORIGINS = ['https://don-duckworth.github.io', 'http://localhost:8766', 'http://127.0.0.1:8766'];
 const cors = (req: Request) => {
@@ -52,13 +52,29 @@ async function ebaySold(key: string, q: string) {
   const soldOnly = { prices: p.items.filter(i => i.sold).map(i => i.price), items: p.items.filter(i => i.sold) };
   return { ...sourceStats(soldOnly), currency: 'USD', sold_verified: p.sold };
 }
+// google_ai: Google AI Mode answer to "What is the fair market value of a used … in USD?"; falls back to the regular Google AI Overview.
+async function googleAi(key: string, q: string) {
+  const question = aiQuery(q);
+  let r = await serp(key, { engine: 'google_ai_mode', q: question, gl: 'us', hl: 'en' });
+  if (r.error === 'bad_key' || r.error === 'quota') return { error: r.error };
+  let sentences = r.error ? [] : aiText(r.body), body = r.body, via = 'ai_mode';
+  if (!sentences.length) {
+    const o = await serp(key, { engine: 'google', q: question, gl: 'us', hl: 'en' });
+    if (o.error === 'bad_key' || o.error === 'quota') return { error: o.error };
+    if (!o.error && o.body?.ai_overview?.text_blocks) { sentences = aiText({ ai_overview: o.body.ai_overview }); body = o.body; via = 'ai_overview'; }
+  }
+  if (!sentences.length) return { error: r.error || 'no_results', median: null, count: 0 };
+  const v = parseAiValue(sentences);
+  return { ...v, currency: 'USD', via, sources: aiRefs(body, 5), ...(v.median == null ? { error: 'no_number' } : {}) };
+}
 async function lookup(key: string, q: string, srcs: string[]) {
-  const [e, g] = await Promise.all([srcs.includes('ebay_sold') ? ebaySold(key, q) : null, srcs.includes('google_new') ? googleNew(key, q) : null]);
-  const out: Record<string, unknown> = {};
-  if (e) out.ebay_sold = e; if (g) out.google_new = g;
+  const run: Record<string, (k: string, q: string) => Promise<Record<string, unknown>>> = { google_ai: googleAi, ebay_sold: ebaySold, google_new: googleNew };
+  const got = await Promise.all(srcs.map(k => run[k](key, q)));
+  const out: Record<string, Record<string, unknown>> = {};
+  srcs.forEach((k, ix) => { out[k] = got[ix]; });
   const pick = suggest(out);
-  const best = pick ? out[pick] as Record<string, unknown> : null;
-  const fatal = [e, g].find(x => x && (x.error === 'bad_key' || x.error === 'quota'));
+  const best = pick ? out[pick] : null;
+  const fatal = got.find(x => x && (x.error === 'bad_key' || x.error === 'quota'));
   return { ...out, suggested: pick, median: best?.median ?? null, low: best?.low ?? null, high: best?.high ?? null, count: best?.count ?? 0,
     sources: best?.sources ?? [], currency: 'USD', ...(fatal && !pick ? { error: fatal.error } : {}), ...(fatal ? { stop: fatal.error } : {}) };
 }
@@ -74,7 +90,7 @@ Deno.serve(async req => {
   const list = Array.isArray(body?.items) ? body.items : null;
   if (!list || !list.length) return json(req, 400, { error: 'bad_request', message: 'items[] required.' });
   if (list.length > MAX_PER_CALL) return json(req, 400, { error: 'too_many', message: `At most ${MAX_PER_CALL} items per call.` });
-  const srcs = Array.isArray(body?.sources) ? SOURCES.filter(x => body.sources!.includes(x)) : SOURCES.slice();
+  const srcs = Array.isArray(body?.sources) ? SOURCES.filter(x => body.sources!.includes(x)) : DEFAULT_SOURCES.slice();
   if (!srcs.length) return json(req, 400, { error: 'bad_request', message: 'Pick at least one source.' });
   const key = Deno.env.get('SERPAPI_KEY');
   if (!key) return json(req, 503, { error: 'missing_key', message: 'SERPAPI_KEY secret is not set on this Supabase project.' });

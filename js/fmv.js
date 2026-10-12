@@ -65,8 +65,9 @@ export function pickSources(items, est, n = 5) {
 export const applyValue = m => (m == null ? null : Math.round(m));
 
 // ---------- v2.3: two sources (same SERPAPI_KEY) ----------
-export const SOURCES = ['ebay_sold', 'google_new'];
-export const SOURCE_LABEL = { ebay_sold: 'eBay sold', google_new: 'Google new' };
+export const SOURCES = ['google_ai', 'ebay_sold', 'google_new'];
+export const SOURCE_LABEL = { google_ai: 'Google AI', ebay_sold: 'eBay sold', google_new: 'Google Shopping' };
+export const DEFAULT_SOURCES = ['google_ai'];
 export const EBAY_MIN = 3; // eBay sold median is suggested when it has at least this many kept prices
 /** Parse a SerpApi engine=ebay response → { prices, items, sold } (sold = how many results carry a sold date / sold marker). */
 export function parseEbay(json, max = 60) {
@@ -89,10 +90,47 @@ export function sourceStats(parsed, n = 5) {
 }
 /** Which source to suggest: eBay sold when it has ≥ EBAY_MIN kept prices, else Google, else whatever has a median. */
 export function suggest(r) {
-  const e = r?.ebay_sold, g = r?.google_new;
+  const a = r?.google_ai, e = r?.ebay_sold, g = r?.google_new;
+  if (a && !a.error && a.median != null) return 'google_ai';
   if (e && !e.error && e.median != null && e.count >= EBAY_MIN) return 'ebay_sold';
   if (g && !g.error && g.median != null) return 'google_new';
   if (e && !e.error && e.median != null) return 'ebay_sold';
   return null;
 }
 export const searchesPerItem = srcs => SOURCES.filter(s => srcs.includes(s)).length;
+
+// ---------- v2.4: Google AI (engine=google_ai_mode, fallback AI Overview) ----------
+export const aiQuery = q => `What is the fair market value of a used ${cleanQuery(q)} in USD?`;
+const AMT = String.raw`\$\s?(\d{1,3}(?:,\d{3})+|\d+)(?:\.(\d{1,2}))?\s?(k|K|thousand)?`;
+const toNum = (int, dec, k) => { let n = parseFloat(int.replace(/,/g, '') + (dec ? '.' + dec : '')); if (k) n *= 1000; return n; };
+const RANGE_RE = new RegExp(`${AMT}\\s*(?:-|–|—|to|and)\\s*(?:US)?${AMT}`, 'g');
+const ONE_RE = new RegExp(AMT, 'g');
+const KEY_RE = /\b(used|fair market|resale|pre-?owned|second-?hand|sell(?:s|ing)? for|sold for|worth|value|valued|typically|range|average)\b/i;
+const NEG_RE = /\b(new|msrp|retail|original(?:ly)? (?:priced|price)|launch(?:ed)? at|list price|cost new)\b/i;
+/** All readable text of an AI Mode / AI Overview answer → [sentences]. */
+export function aiText(json) {
+  const blocks = json?.text_blocks || json?.ai_overview?.text_blocks || [];
+  const out = [];
+  const walk = b => { if (!b) return; if (b.snippet) out.push(String(b.snippet)); for (const x of b.list || []) walk(x); for (const x of b.text_blocks || []) walk(x); };
+  blocks.forEach(walk);
+  if (!out.length && json?.reconstructed_markdown) out.push(String(json.reconstructed_markdown).replace(/[#*_`>]/g, ' '));
+  return out.join('\n').split(/(?<=[.!?])\s+|\n+/).map(x => x.replace(/\s+/g, ' ').trim()).filter(Boolean);
+}
+/** Pull a used-value figure from AI answer sentences: prefer a range in a used/value sentence (midpoint), else a single amount there. */
+export function parseAiValue(sentences) {
+  const scored = sentences.map((t, ix) => ({ t, ix, sc: (KEY_RE.test(t) ? 2 : 0) - (NEG_RE.test(t) && !/\bused\b/i.test(t) ? 2 : 0) })).filter(x => /\$\s?\d/.test(x.t));
+  scored.sort((a, b) => b.sc - a.sc || a.ix - b.ix);
+  for (const { t } of scored) {
+    RANGE_RE.lastIndex = 0; const m = RANGE_RE.exec(t);
+    if (m) { let lo = toNum(m[1], m[2], m[3]), hi = toNum(m[4], m[5], m[6] || m[3]); if (lo > hi) [lo, hi] = [hi, lo]; if (lo >= 5) return { median: Math.round((lo + hi) / 2 * 100) / 100, low: lo, high: hi, count: 1, quote: t.slice(0, 400) }; }
+  }
+  for (const { t } of scored) {
+    ONE_RE.lastIndex = 0; const m = ONE_RE.exec(t);
+    if (m) { const v = toNum(m[1], m[2], m[3]); if (v >= 5) return { median: v, low: v, high: v, count: 1, quote: t.slice(0, 400) }; }
+  }
+  return { median: null, low: null, high: null, count: 0, quote: sentences.slice(0, 2).join(' ').slice(0, 400) };
+}
+export function aiRefs(json, n = 5) {
+  return (json?.references || json?.ai_overview?.references || []).filter(r => /^https:\/\//.test(r?.link || '')).slice(0, n)
+    .map(r => ({ title: String(r.title || '').slice(0, 200), source: String(r.source || '').slice(0, 80), price: null, link: String(r.link).slice(0, 600) }));
+}
