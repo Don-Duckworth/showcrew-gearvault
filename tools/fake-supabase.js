@@ -168,7 +168,21 @@
     const u = db.users.find(x => x.email === OPTS.recoveryEmail);
     if (u) { setSess({ user_id: u.id, aal: 'aal1' }); setTimeout(() => emit('PASSWORD_RECOVERY', session()), 30); }
   }
-  const client = { auth, from: t => new Query(t), storage: { from: bucket } };
+  // functions.invoke: tests install window.__fakeFn = async (name, body, ctx) => ({ status, body }); default answers missing_key like the real function.
+  const functions = {
+    async invoke(name, { body } = {}) {
+      log.push({ op: 'invoke', name, body }); const s = sess();
+      let r;
+      if (!navigator.onLine) return { data: null, error: { name: 'FunctionsFetchError', message: 'Failed to send a request to the Edge Function', context: {} } };
+      if (!s) r = { status: 401, body: { error: 'unauthorized' } };
+      else if (s.aal !== 'aal2') r = { status: 403, body: { error: 'mfa_required' } };
+      else r = window.__fakeFn ? await window.__fakeFn(name, body, { aal: s.aal }) : { status: 503, body: { error: 'missing_key' } };
+      if (r.status >= 200 && r.status < 300) return { data: r.body, error: null };
+      const json = JSON.stringify(r.body);
+      return { data: null, error: { name: 'FunctionsHttpError', message: 'Edge Function returned a non-2xx status code', context: new Response(json, { status: r.status, headers: { 'Content-Type': 'application/json' } }) } };
+    },
+  };
+  const client = { auth, from: t => new Query(t), storage: { from: bucket }, functions };
   window.__GV_TEST_SUPABASE__ = cfg => { log.push({ op: 'createClient', bucket: cfg.STORAGE_BUCKET }); return client; };
   window.__fakeSb = {
     log, get db() { return db; }, reload() { db = load(); for (const t of T) db.tables[t] = db.tables[t] || []; },

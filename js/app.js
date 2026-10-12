@@ -10,8 +10,9 @@ import * as CFG from './config.js';
 import * as Emx from './emx.js';
 import * as Scan from './scan.js';
 import * as P from './parts.js';
+import * as Fmv from './fmv.js';
 
-const APP_VERSION = '2.2.0';
+const APP_VERSION = '2.3.0';
 const $ = (sel, el = document) => el.querySelector(sel);
 const $$ = (sel, el = document) => [...el.querySelectorAll(sel)];
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -199,7 +200,7 @@ function gearViewHTML() {
   const tags = [...new Set(S.items.flatMap(i => i.tags))].sort((a, b) => a.localeCompare(b));
   const cats = [...new Set([...S.settings.categories, ...S.items.map(i => i.category)])];
   const opt = (v, l, cur) => `<option value="${esc(v)}" ${v === cur ? 'selected' : ''}>${esc(l)}</option>`;
-  return `<div class="pane-h"><h2>Gear inventory</h2><div class="row"><button class="btn sm ghost" data-act="exportInvCSV">⤓ CSV</button><button class="btn sm primary" data-act="newItem">＋ Add gear</button></div></div>
+  return `<div class="pane-h"><h2>Gear inventory</h2><div class="row"><button class="btn sm" data-act="fmvOpen" ${readOnly() ? 'disabled' : ''} title="Estimate current values from Google Shopping">⟳ Update values</button><button class="btn sm ghost" data-act="exportInvCSV">⤓ CSV</button><button class="btn sm primary" data-act="newItem">＋ Add gear</button></div></div>
   <div class="toolbar">
     <div class="search has-scan"><input id="q" class="inp" type="search" placeholder="Search name, serial, Electromaxx #, tag…" value="${esc(ui.q)}" autocomplete="off" aria-label="Search"><button class="scanbtn" data-act="scanSearch" aria-label="Scan an Electromaxx sticker" title="Scan an Electromaxx sticker">${SCAN_ICON}</button></div>
     <select class="inp" data-filter="fCat" aria-label="Category">${opt('', 'All categories', ui.fCat)}${cats.map(c => opt(c, c, ui.fCat)).join('')}</select>
@@ -241,7 +242,7 @@ function gearRowHTML(i, { depth = 0, kids = null, flat = false } = {}) {
       ${partsTag || partOf || ptTag ? `<div class="g-parts">${ptTag}${partOf}${partsTag}</div>` : ''}
       ${flags ? `<div class="g-flags">${flags}</div>` : ''}</div>
     <div class="g-meta"><div>${esc(i.category)}</div><div class="row">${kits.map(k => `<span class="tag kit">▣ ${esc(k.name)}</span>`).join('')}${i.tags.map(t => `<span class="tag">#${esc(t)}</span>`).join('')}</div>${i.origin ? `<div>Origin: ${esc(i.origin)}</div>` : ''}</div>
-    <div class="g-val">${v == null ? '<span style="color:var(--amber)">—</span>' : money(v * (i.qty || 1), i.currency)}<small>${i.qty > 1 ? `${i.qty} × ${money(v, i.currency)}` : i.currentValue != null ? 'current value' : v != null ? 'purchase' : 'no value'}</small>${vw ? `<small class="inclparts" title="Item + all its parts${vw.other ? ` (${vw.other} in another currency not included)` : ''}">${money(vw.value, vw.currency)} incl. parts</small>` : ''}</div>
+    <div class="g-val">${v == null ? '<span style="color:var(--amber)">—</span>' : money(v * (i.qty || 1), i.currency)}<small>${i.qty > 1 ? `${i.qty} × ${money(v, i.currency)}` : i.currentValue != null ? 'current value' : v != null ? 'purchase' : 'no value'}</small>${vw ? `<small class="inclparts" title="Item + all its parts${vw.other ? ` (${vw.other} in another currency not included)` : ''}">${money(vw.value, vw.currency)} incl. parts</small>` : ''}${i.fmv?.checkedAt ? `<small class="fmvchk" title="Fair market value lookup">value checked ${esc(fmvDate(i.fmv.checkedAt))}</small>` : ''}</div>
   </button>`;
 }
 function renderGearList() {
@@ -292,7 +293,9 @@ function openItemEditor(item, isNew = false, { returnTo = null } = {}) {
       <label class="fld"><span>Currency</span><select class="inp" data-f="currency">${[...new Set([d.currency, ...Store.CURRENCIES])].map(c => `<option ${c === d.currency ? 'selected' : ''}>${c}</option>`).join('')}</select></label>
       ${f('vendor', 'Vendor', 'placeholder="Store / seller" list="dl-vendors" autocomplete="off"')}
       ${f('currentValue', 'Current value (each) — overrides price on carnets', 'type="number" inputmode="decimal" step="0.01" min="0" placeholder="Defaults to purchase price"', 'span2')}
-      <p class="hint span2" style="align-self:center">Carnets need the <b>current fair market value</b>, not what you paid. Leave blank to use the purchase price.</p>
+      <div class="span2" style="align-self:center"><p class="hint">Carnets need the <b>current fair market value</b>, not what you paid. Leave blank to use the purchase price.</p>
+        <div class="row wrap" style="margin-top:6px"><button class="btn sm" type="button" data-act="fmvItem" ${readOnly() ? 'disabled' : ''}>⟳ Look up value</button><span class="hint">1 SerpApi search · you review first</span></div>
+        <p class="hint fmvinfo" id="fmvInfo"></p></div>
     </div></div>
     <div class="section"><div class="lbl">Carnet / customs</div><div class="grid4">
       ${f('origin', 'Country of origin <b>● carnet</b>', 'list="dl-countries" placeholder="Where it was made, e.g. China" autocomplete="off"', 'span2 ' + need('origin'))}
@@ -312,8 +315,156 @@ function openItemEditor(item, isNew = false, { returnTo = null } = {}) {
     ${dataLists()}
     <div class="sheet-f">${isNew ? '' : '<button class="btn danger" data-act="deleteItem">Delete</button><button class="btn ghost" data-act="dupItem">Duplicate</button>'}<span class="grow"></span><button class="btn ghost" data-act="cancelEdit">Cancel</button><button class="btn primary" data-act="saveItem">Save</button></div>`,
   { cls: 'wide', backdrop: false, onClose: () => { const rt = ui.edit?.returnTo; discardEdit(); if (rt) reopenItem(rt); } });
-  renderAtts(); emxHint(); renderPartOf(); renderParts();
+  renderAtts(); emxHint(); renderPartOf(); renderParts(); renderFmvInfo();
   if (isNew && !d.emx) $('[data-f=name]', o)?.focus({ preventScroll: true });
+}
+// ----- fair market value (v2.3) -----
+const FMV_SECRETS_URL = 'https://supabase.com/dashboard/project/ggtkglxvuxvmuqtpvlgs/functions/secrets';
+const fmvDate = iso => (iso ? new Date(iso).toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' }) : '');
+const FMV_ERR = {
+  missing_key: `Price lookups aren't set up yet: add the <b>SERPAPI_KEY</b> secret in <a href="${FMV_SECRETS_URL}" target="_blank" rel="noopener">Supabase → Edge Functions → Secrets</a>.`,
+  bad_key: 'SerpApi rejected the API key — check the SERPAPI_KEY secret.', quota: 'SerpApi search quota used up for this month.',
+  mfa_required: 'Two-factor verification is required — sign out and back in.', unauthorized: 'Session expired — sign in again.',
+  timeout: 'SerpApi timed out — retry.', upstream: 'SerpApi error — retry later.', skipped: 'Skipped (lookups stopped).', bad_item: 'Empty search text.',
+  network: 'Could not reach the lookup function.',
+};
+const fmvErrText = c => FMV_ERR[c] || esc(c || 'Lookup failed');
+function setFmvButtons() { $$('[data-act=fmvOpen],[data-act=fmvItem]').forEach(b => { b.disabled = readOnly(); b.title = readOnly() ? 'Needs a connection' : ''; }); }
+/** Call fmv-lookup for [{item_id, query}] (≤ MAX_PER_CALL). Returns { results } or throws { code }. */
+async function fmvInvoke(list) {
+  if (isOffline() || !sb) throw Object.assign(new Error('offline'), { code: 'network' });
+  const { data, error } = await sb.functions.invoke('fmv-lookup', { body: { items: list } });
+  if (error) {
+    let code = 'network', body = null;
+    try { body = await error.context?.json?.(); } catch { /* not json */ }
+    if (body?.error) code = body.error; else if (error.context?.status === 401) code = 'unauthorized';
+    throw Object.assign(new Error(code), { code });
+  }
+  return data;
+}
+async function fmvRunRows(rows, onProgress) {
+  let done = 0;
+  for (let ix = 0; ix < rows.length; ix += Fmv.MAX_PER_CALL) {
+    const batch = rows.slice(ix, ix + Fmv.MAX_PER_CALL).filter(r => r.query);
+    rows.slice(ix, ix + Fmv.MAX_PER_CALL).filter(r => !r.query).forEach(r => { r.res = { error: 'bad_item' }; });
+    if (batch.length) {
+      try {
+        const data = await fmvInvoke(batch.map(r => ({ item_id: r.id, query: r.query })));
+        const by = new Map((data?.results || []).map(x => [x.item_id, x]));
+        batch.forEach(r => { r.res = by.get(r.id) || { error: 'upstream' }; r.res.checked_at = data?.checked_at; });
+      } catch (e) {
+        batch.forEach(r => { r.res = { error: e.code }; });
+        if (['missing_key', 'mfa_required', 'unauthorized', 'network'].includes(e.code)) { rows.slice(ix + Fmv.MAX_PER_CALL).forEach(r => { r.res = { error: e.code }; }); onProgress(rows.length, e.code); return e.code; }
+      }
+    }
+    done = Math.min(rows.length, ix + Fmv.MAX_PER_CALL); onProgress(done);
+    if (rows.slice(0, done).some(r => r.res?.error === 'quota' || r.res?.error === 'bad_key')) { rows.slice(done).forEach(r => { r.res = { error: 'skipped' }; }); onProgress(rows.length); return 'stopped'; }
+  }
+  return null;
+}
+const FMV_NOTE = '<p class="hint fmvnote">⚠ Google Shopping mostly lists <b>new retail</b> prices, so used gear may be overstated — edit the value if needed. Carnets want the current fair market value.</p>';
+function fmvOpen() {
+  const all = S.items, filt = filteredItems(), noVal = S.items.filter(i => i.currentValue == null);
+  const o = openLayer(`<div class="sheet-h"><div class="title">⟳ UPDATE VALUES</div><button class="iconbtn" data-close aria-label="Close">✕</button></div>
+    <div class="section"><div class="lbl">Which gear</div>
+      <label class="radio"><input type="radio" name="fmvScope" value="all" checked> All gear <small>(${all.length})</small></label>
+      <label class="radio"><input type="radio" name="fmvScope" value="filtered" ${listFiltered() ? '' : 'disabled'}> Current filter / search <small>(${filt.length})</small></label>
+      <label class="radio"><input type="radio" name="fmvScope" value="novalue"> Items without a current value <small>(${noVal.length})</small></label>
+      <label class="radio"><input type="checkbox" id="fmvInstalled"> Include parts marked <b>installed</b> (RAM, drives…)</label>
+      <label class="radio"><input type="checkbox" id="fmvInactive"> Include sold / retired gear</label></div>
+    <p class="hint" id="fmvCount"></p>
+    <p class="hint">Each item uses <b>1 SerpApi search</b>; the free plan allows about <b>100 searches a month</b>. Nothing changes until you review and apply.</p>
+    ${FMV_NOTE}
+    <div class="row"><button class="btn ghost grow" data-close>Cancel</button><button class="btn primary grow" id="fmvGo">Look up values</button></div>`, { cls: 'small' });
+  const pick = () => {
+    const sc = $('input[name=fmvScope]:checked', o).value, inst = $('#fmvInstalled', o).checked, inact = $('#fmvInactive', o).checked;
+    return (sc === 'filtered' ? filt : sc === 'novalue' ? noVal : all).filter(i => (inst || P.partTypeOf(i) !== 'installed') && (inact || inService(i)));
+  };
+  const upd = () => { const n = pick().length; $('#fmvCount', o).innerHTML = `<b>${plural(n, 'item')}</b> → ${plural(n, 'search', )}`; $('#fmvGo', o).disabled = !n; };
+  o.addEventListener('change', upd); upd();
+  o.addEventListener('click', e => {
+    if (e.target.closest('[data-close]')) return closeLayer(o);
+    if (e.target.closest('#fmvGo')) { const list = pick(); closeLayer(o, true); fmvReview(list.map(i => ({ id: i.id, query: Fmv.buildQuery(i), checked: false, res: null }))); }
+  });
+}
+/** Review table. rows: [{id, query, res, checked}]. single = { d } when launched from the editor (applies to the draft). */
+function fmvReview(rows, single = null) {
+  const item = r => (single ? single.d : itemById(r.id));
+  const o = openLayer(`<div class="sheet-h"><div class="title">⟳ REVIEW VALUES</div><button class="iconbtn" data-close aria-label="Close">✕</button></div>
+    <div id="fmvProg" class="fmvprog"><div class="bar"><i style="width:0%"></i></div><span>Looking up 0 / ${rows.length}…</span></div>
+    <div id="fmvMsg"></div>${FMV_NOTE}
+    <div class="fmvwrap"><table class="fmvt"><thead><tr><th><input type="checkbox" id="fmvAll" aria-label="Select all"></th><th>Item</th><th class="r">Current</th><th class="r">Suggested</th><th class="r">Range</th><th class="r">#</th><th>Sources</th><th>Search</th></tr></thead><tbody id="fmvBody"></tbody></table></div>
+    <div class="sheet-f"><span class="hint grow" id="fmvSel"></span><button class="btn ghost" data-close>Cancel</button><button class="btn primary" id="fmvApply" disabled>Apply selected</button></div>`, { cls: 'wide' });
+  o._rows = rows;
+  const fmvOk = r => { const it = item(r); return !!(it && r.res && !r.res.error && r.res.median != null && (it.currency || 'USD') === 'USD'); };
+  const rowHTML = (r, ix) => {
+    const it = item(r); if (!it) return '';
+    const x = r.res, busy = r.busy || !x, usd = (it.currency || 'USD') === 'USD', okRes = x && !x.error && x.median != null && usd;
+    const src = okRes ? (x.sources || []).map(s => `<a href="${esc(s.link)}" target="_blank" rel="noopener noreferrer" title="${esc(s.title)}">${esc(s.source || 'link')} ${money(s.price, 'USD', false)}</a>`).join('') : '';
+    const status = busy ? '<span class="hint">…</span>' : x.error ? `<span class="fmverr">${fmvErrText(x.error)}</span>` : x.median == null ? '<span class="hint">No prices found — edit the search and retry</span>' : !usd ? `<span class="hint">${money(x.median, 'USD', false)} USD — item is in ${esc(it.currency)}, enter it by hand</span>` : '';
+    return `<tr data-ix="${ix}" class="${okRes ? '' : 'nores'}">
+      <td><input type="checkbox" data-fmvck ${okRes ? '' : 'disabled'} ${r.checked && okRes ? 'checked' : ''} aria-label="Apply"></td>
+      <td class="nm">${esc(itemTitle(it))}${it.fmv?.checkedAt ? `<small>checked ${esc(fmvDate(it.fmv.checkedAt))}</small>` : ''}</td>
+      <td class="r">${it.currentValue != null ? money(Store.parseNum(it.currentValue), it.currency, false) : '<span class="hint">—</span>'}</td>
+      <td class="r sug">${okRes ? money(Fmv.applyValue(x.median), 'USD', false) : status}</td>
+      <td class="r">${okRes ? `${money(x.low, 'USD', false)}–${money(x.high, 'USD', false)}` : ''}</td>
+      <td class="r">${okRes ? x.count : ''}</td>
+      <td class="src">${src}</td>
+      <td class="q"><div class="joined"><input class="inp" data-fmvq value="${esc(r.query)}" maxlength="${Fmv.MAX_QUERY}" aria-label="Search text"><button class="btn sm ghost" data-fmvretry title="Search again (1 search)">↻</button></div></td></tr>`;
+  };
+  const paint = () => {
+    $('#fmvBody', o).innerHTML = rows.map(rowHTML).join('');
+    const sel = rows.filter(r => r.checked && fmvOk(r));
+    $('#fmvSel', o).textContent = `${sel.length} of ${rows.length} selected`; $('#fmvApply', o).disabled = !sel.length || readOnly();
+  };
+  const msg = code => { $('#fmvMsg', o).innerHTML = code ? `<p class="warn">${fmvErrText(code)}</p>` : ''; };
+  const prog = (n, code) => {
+    const p = $('#fmvProg', o); if (!p) return;
+    $('i', p).style.width = `${Math.round(100 * n / rows.length)}%`; $('span', p).textContent = n >= rows.length ? `Done — ${rows.filter(r => r.res && !r.res.error && r.res.median != null).length} of ${rows.length} found` : `Looking up ${n} / ${rows.length}…`;
+    rows.forEach(r => { if (r.res && r.checked == null) r.checked = fmvOk(r); }); if (code) msg(code); paint();
+  };
+  rows.forEach(r => { r.checked = null; });
+  paint(); fmvRunRows(rows, prog).then(code => { if (code && code !== 'stopped') msg(code); else if (code === 'stopped') msg(rows.find(r => r.res?.error === 'quota') ? 'quota' : 'bad_key'); });
+  o.addEventListener('input', e => { const q = e.target.closest('[data-fmvq]'); if (q) rows[+q.closest('tr').dataset.ix].query = Fmv.cleanQuery(q.value); });
+  o.addEventListener('change', e => {
+    if (e.target.id === 'fmvAll') { rows.forEach(r => { r.checked = e.target.checked; }); return paint(); }
+    const c = e.target.closest('[data-fmvck]'); if (c) { rows[+c.closest('tr').dataset.ix].checked = c.checked; paint(); }
+  });
+  o.addEventListener('click', async e => {
+    if (e.target.closest('[data-close]')) return closeLayer(o);
+    const rb = e.target.closest('[data-fmvretry]');
+    if (rb) {
+      if (readOnly()) return toast('Offline — reconnect to look up values');
+      const r = rows[+rb.closest('tr').dataset.ix]; if (!r.query) return toast('Enter search text first');
+      r.busy = true; paint(); msg('');
+      try { const d = await fmvInvoke([{ item_id: r.id, query: r.query }]); r.res = { ...(d.results || [])[0], checked_at: d.checked_at }; }
+      catch (er) { r.res = { error: er.code }; msg(er.code); }
+      r.busy = false; r.checked = fmvOk(r); paint(); return;
+    }
+    if (e.target.closest('#fmvApply')) {
+      if (readOnly()) return toast('Offline — read-only. Reconnect to make changes.');
+      const sel = rows.filter(r => r.checked && fmvOk(r)); let n = 0;
+      for (const r of sel) {
+        const it = item(r); if (!it) continue; const x = r.res;
+        it.currentValue = Fmv.applyValue(x.median);
+        it.fmv = Store.sanitizeFmv({ value: x.median, low: x.low, high: x.high, count: x.count, checkedAt: x.checked_at || new Date().toISOString(), query: r.query, sources: x.sources });
+        if (!single) it.updated = Date.now();
+        n++;
+      }
+      closeLayer(o, true);
+      if (single) { const inp = $('[data-f=currentValue]'); if (inp) inp.value = single.d.currentValue; renderFmvInfo(); toast('Value filled in — Save to keep it', 2400); }
+      else { persist(); render(); toast(`Updated ${plural(n, 'value')}`); }
+    }
+  });
+}
+function renderFmvInfo() {
+  const el = $('#fmvInfo'); if (!el || !ui.edit) return; const f = ui.edit.d.fmv;
+  el.innerHTML = f ? `Value checked ${esc(fmvDate(f.checkedAt))}: median ${money(f.value, 'USD', false)} (${money(f.low, 'USD', false)}–${money(f.high, 'USD', false)}, ${plural(f.count, 'result')})${f.sources?.length ? ' · ' + f.sources.filter(s => s.link).map(s => `<a href="${esc(s.link)}" target="_blank" rel="noopener noreferrer">${esc(s.source || 'link')}</a>`).join(' ') : ''}` : '';
+}
+function fmvItem() {
+  const E = ui.edit; if (!E) return;
+  const q = Fmv.buildQuery(E.d); if (!q) return toast('Enter a make, model or name first');
+  fmvReview([{ id: E.d.id, query: q, res: null }], { d: E.d });
 }
 // ----- parts (v2.2) -----
 const editSig = E => JSON.stringify([E.d, [...E.kits].sort(), E.newAtts, E.pendingDel]);
@@ -722,7 +873,7 @@ async function scanToFind() {
 }
 // Actions that change data — blocked while offline / read-only.
 const MUTATING = new Set(['newItem', 'saveItem', 'dupItem', 'deleteItem', 'addPart', 'linkPart', 'linkPick', 'unlinkPart', 'unlinkSelf', 'removeAtt', 'newKit', 'saveKit', 'deleteKit', 'newTrip', 'deleteTrip', 'toggleTripKit',
-  'pickTripItems', 'saveTripItems', 'removeTripItem', 'excludeLine', 'restoreLine', 'addCategory', 'delCategory', 'eraseAll', 'uploadLegacy']);
+  'pickTripItems', 'saveTripItems', 'removeTripItem', 'excludeLine', 'restoreLine', 'addCategory', 'delCategory', 'eraseAll', 'uploadLegacy', 'fmvOpen', 'fmvItem']);
 
 const ACTIONS = {
   closeTop: () => closeLayer(),
@@ -797,6 +948,8 @@ const ACTIONS = {
   viewAtt: (el, e) => { if (e.target.closest('.x')) return; const a = ui.edit?.d.atts.find(x => x.id === el.dataset.id); if (a) viewAtt(a); },
   removeAtt: async el => { const E = ui.edit, a = E.d.atts.find(x => x.id === el.dataset.id); if (!a) return; if (!(await confirmBox(`Remove ${a.kind} “${a.name}”?`, 'Remove'))) return; E.d.atts = E.d.atts.filter(x => x !== a); E.pendingDel.push(a.id); (E.removed = E.removed || []).push(a); renderAtts(); },
   scanSearch: () => scanToFind(),
+  fmvOpen: () => fmvOpen(),
+  fmvItem: () => fmvItem(),
   scanEmx: async () => {
     const r = await Scan.scan({ title: 'SCAN STICKER FOR THIS ITEM' }); if (!r || !ui.edit) return;
     const inp = $('[data-f=emx]'); ui.edit.d.emx = r.emx; if (inp) inp.value = r.emx; emxHint();
@@ -946,11 +1099,11 @@ async function boot() {
   offerLegacyUpload();
 }
 $('#netBadge').addEventListener('click', () => { if (bootOffline && navigator.onLine) location.reload(); else if (syncErr) runSync(); else ui.view = 'data', render(); });
-window.addEventListener('online', () => { renderBadge(); if (bootOffline) { toast('Back online — tap the badge to reconnect', 3500); $('#netBadge').textContent = 'OFFLINE · TAP TO RECONNECT'; } else { runSync().then(() => refreshFromCloud()); } });
-window.addEventListener('offline', () => { renderBadge(); toast('Offline — read-only until you reconnect'); });
+window.addEventListener('online', () => { renderBadge(); setFmvButtons(); if (bootOffline) { toast('Back online — tap the badge to reconnect', 3500); $('#netBadge').textContent = 'OFFLINE · TAP TO RECONNECT'; } else { runSync().then(() => refreshFromCloud()); } });
+window.addEventListener('offline', () => { renderBadge(); setFmvButtons(); toast('Offline — read-only until you reconnect'); });
 document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') refreshFromCloud(); });
 window.addEventListener('beforeunload', e => { if (unsaved()) { e.preventDefault(); e.returnValue = ''; } });
 
 if ('serviceWorker' in navigator && location.protocol !== 'file:') navigator.serviceWorker.register('./sw.js').catch(e => console.warn('SW registration failed', e));
-window.__gv = { get S() { return S; }, ui, render, Files, C, Store, M, Cache, Scan, Emx, layers, get cloud() { return cloud; }, get user() { return user; }, runSync, refreshFromCloud, readOnly };
+window.__gv = { Fmv, get S() { return S; }, ui, render, Files, C, Store, M, Cache, Scan, Emx, layers, get cloud() { return cloud; }, get user() { return user; }, runSync, refreshFromCloud, readOnly };
 boot();

@@ -364,3 +364,26 @@ body.readonly #addBtn, body.readonly [data-act=newItem], body.readonly [data-act
 .paper .subnote { font-size: 7.5pt; color: #555; font-style: italic; }
 @media (max-width: 640px) { .gear.child { margin-left: calc(var(--depth, 1) * 12px); width: calc(100% - var(--depth, 1) * 12px); } .partrow { grid-template-columns: 1fr auto auto; } .partrow .pt, .partrow .pe { display: none; } }
 .paper tr.subline td.sn { font-size: 8.5pt; }
+
+/* ---------- v2.3 fair market value ---------- */
+.radio { display: flex; align-items: center; gap: 10px; min-height: 40px; font-size: 14.5px; cursor: pointer; }
+.radio input { width: 20px; height: 20px; accent-color: var(--cyan); }
+.radio small { color: var(--dim); }
+.fmvnote { border-left: 2px solid var(--amber); padding-left: 10px; }
+.fmvprog { display: flex; align-items: center; gap: 12px; font-size: 13px; color: var(--dim); }
+.fmvprog .bar { flex: 1; height: 6px; border-radius: 3px; background: rgba(0, 229, 255, .12); overflow: hidden; }
+.fmvprog .bar i { display: block; height: 100%; background: var(--cyan); box-shadow: 0 0 10px var(--cyan); transition: width .3s; }
+.fmvwrap { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+.fmvt { width: 100%; border-collapse: collapse; font-size: 13.5px; }
+.fmvt th { text-align: left; font-size: 11px; letter-spacing: .08em; text-transform: uppercase; color: var(--dim); padding: 6px; border-bottom: 1px solid var(--edge); white-space: nowrap; }
+.fmvt td { padding: 8px 6px; border-bottom: 1px solid rgba(0, 229, 255, .08); vertical-align: middle; }
+.fmvt .r { text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.fmvt .nm { min-width: 140px; } .fmvt .nm small { display: block; color: var(--dim); font-size: 11px; }
+.fmvt .sug { color: var(--cyan); font-weight: 700; } .fmvt .sug .hint, .fmvt .sug .fmverr { font-weight: 400; white-space: normal; }
+.fmvt .src { min-width: 120px; } .fmvt .src a { display: block; font-size: 12px; color: var(--cyan); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 170px; }
+.fmvt .q { min-width: 210px; } .fmvt .q .inp { min-height: 36px; font-size: 13px; }
+.fmvt input[type=checkbox] { width: 20px; height: 20px; accent-color: var(--cyan); }
+.fmvt tr.nores td { opacity: .8; }
+.fmverr { color: var(--amber); font-size: 12.5px; } .fmverr a, .warn a, .fmvinfo a { color: var(--cyan); }
+.fmvinfo { margin-top: 6px; } .fmvinfo a { margin-right: 6px; }
+.g-val .fmvchk { color: var(--dim); font-size: 10.5px; }
