@@ -56,8 +56,11 @@ export function sanitizeFmv(f) {
   const t = Date.parse(f.checkedAt);
   return { value: numOrNull(f.value), low: numOrNull(f.low), high: numOrNull(f.high), count: Math.max(0, Math.round(numOrNull(f.count) || 0)),
     checkedAt: Number.isFinite(t) ? new Date(t).toISOString() : null, query: s(f.query, 200),
-    sources: (Array.isArray(f.sources) ? f.sources : []).slice(0, 5).map(x => ({ title: s(x?.title, 200), source: s(x?.source, 80), price: numOrNull(x?.price), link: httpsUrl(x?.link) })) };
+    pick: ['ebay_sold', 'google_new', 'manual'].includes(f.pick) ? f.pick : 'google_new', sources: links(f.sources),
+    bySource: Object.fromEntries(['ebay_sold', 'google_new'].filter(k => f.bySource?.[k] && numOrNull(f.bySource[k].median) != null).map(k => { const b = f.bySource[k];
+      return [k, { median: numOrNull(b.median), low: numOrNull(b.low), high: numOrNull(b.high), count: Math.max(0, Math.round(numOrNull(b.count) || 0)), sources: links(b.sources) }]; })) };
 }
+const links = a => (Array.isArray(a) ? a : []).slice(0, 5).map(x => ({ title: s(x?.title, 200), source: s(x?.source, 80), price: numOrNull(x?.price), link: httpsUrl(x?.link) }));
 export function sanitizeItem(i, settings = defaultSettings()) {
   const base = makeItem(settings);
   const st = STATUSES.some(([k]) => k === i.status) ? i.status : 'active';

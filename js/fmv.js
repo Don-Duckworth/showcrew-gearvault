@@ -63,3 +63,36 @@ export function pickSources(items, est, n = 5) {
 }
 /** Value applied to current_value: whole dollars. */
 export const applyValue = m => (m == null ? null : Math.round(m));
+
+// ---------- v2.3: two sources (same SERPAPI_KEY) ----------
+export const SOURCES = ['ebay_sold', 'google_new'];
+export const SOURCE_LABEL = { ebay_sold: 'eBay sold', google_new: 'Google new' };
+export const EBAY_MIN = 3; // eBay sold median is suggested when it has at least this many kept prices
+/** Parse a SerpApi engine=ebay response → { prices, items, sold } (sold = how many results carry a sold date / sold marker). */
+export function parseEbay(json, max = 60) {
+  const out = []; let sold = 0;
+  for (const r of (json?.organic_results || []).slice(0, max)) {
+    const pr = r.price || {};
+    let p = Number(pr.extracted ?? pr.from?.extracted);
+    if (!Number.isFinite(p) && typeof pr.raw === 'string') p = parseFloat(pr.raw.replace(/[^\d.]/g, ''));
+    if (!Number.isFinite(p) || p <= 0 || r.sponsored) continue;
+    const isSold = !!(r.sold_date || /sold/i.test(String(r.price?.raw || '') + ' ' + String(r.listing_status || '')));
+    if (isSold) sold++;
+    out.push({ title: String(r.title || '').slice(0, 200), source: 'eBay', price: p, link: String(r.link || '').slice(0, 600), condition: String(r.condition || '').slice(0, 40), sold: isSold });
+  }
+  return { prices: out.map(i => i.price), items: out, sold };
+}
+/** Stats block for one source: { median, low, high, count, total, sources[] }. */
+export function sourceStats(parsed, n = 5) {
+  const est = estimate(parsed.prices);
+  return { ...est, sources: pickSources(parsed.items, est, n).map(({ title, source, price, link }) => ({ title, source, price, link })) };
+}
+/** Which source to suggest: eBay sold when it has ≥ EBAY_MIN kept prices, else Google, else whatever has a median. */
+export function suggest(r) {
+  const e = r?.ebay_sold, g = r?.google_new;
+  if (e && !e.error && e.median != null && e.count >= EBAY_MIN) return 'ebay_sold';
+  if (g && !g.error && g.median != null) return 'google_new';
+  if (e && !e.error && e.median != null) return 'ebay_sold';
+  return null;
+}
+export const searchesPerItem = srcs => SOURCES.filter(s => srcs.includes(s)).length;

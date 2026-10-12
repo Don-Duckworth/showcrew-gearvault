@@ -28,10 +28,22 @@ const est = F.estimate(p.prices), src = F.pickSources(p.items, est);
 ok(src.length === 2 && src[0].price === 2099 && src.every(s => s.link.startsWith('https://')), 'pickSources: https only, closest to median first');
 ok(eq(F.parseShopping({}).prices, []), 'parseShopping no results');
 ok(fs.readFileSync(new URL('../js/fmv.js', import.meta.url), 'utf8') === fs.readFileSync(new URL('../supabase/functions/fmv-lookup/fmv.js', import.meta.url), 'utf8'), 'Edge Function fmv.js is identical to js/fmv.js');
+// two-source tests
+{ const j = { organic_results: [
+  { title: 'a', price: { raw: '$2,999.00', extracted: 2999 }, link: 'https://www.ebay.com/itm/1', condition: 'Pre-Owned', sold_date: 'Sold Oct 1, 2026' },
+  { title: 'b', price: { from: { extracted: 2800 }, to: { extracted: 3200 } }, link: 'https://www.ebay.com/itm/2' },
+  { title: 'ad', sponsored: true, price: { extracted: 10 }, link: 'https://x' }, { title: 'c', price: { raw: '$3,100' }, link: 'https://www.ebay.com/itm/3' }] };
+  const p = F.parseEbay(j); ok(JSON.stringify(p.prices) === '[2999,2800,3100]' && p.sold === 1 && p.items[0].condition === 'Pre-Owned', 'parseEbay: extracted / from-range / raw, skips sponsored, counts sold');
+  const st = F.sourceStats(p); ok(st.median === 2999 && st.count === 3 && st.sources.length === 3, 'sourceStats');
+  ok(F.suggest({ ebay_sold: { median: 2999, count: 3 }, google_new: { median: 3500, count: 8 } }) === 'ebay_sold', 'suggest eBay when ≥3');
+  ok(F.suggest({ ebay_sold: { median: 2999, count: 2 }, google_new: { median: 3500, count: 8 } }) === 'google_new', 'suggest Google when eBay <3');
+  ok(F.suggest({ ebay_sold: { median: 2999, count: 2 }, google_new: { median: null, count: 0 } }) === 'ebay_sold', 'fallback to thin eBay when Google empty');
+  ok(F.suggest({ ebay_sold: { error: 'sold_unavailable' }, google_new: { error: 'quota' } }) === null, 'suggest null when nothing');
+  ok(F.searchesPerItem(['ebay_sold', 'google_new']) === 2 && F.searchesPerItem(['google_new']) === 1, 'quota cost per item'); }
 { const S = Store.emptyState(); const it = Store.makeItem(S.settings); it.name = 'X';
-  it.fmv = Store.sanitizeFmv({ value: 2149, low: 1999, high: 2299, count: 4, checkedAt: '2026-10-12T18:00:00+00:00', query: 'Apple X', sources: [{ title: 'A', source: 'B', price: 2099, link: 'https://a' }, { title: 'bad', link: 'javascript:x' }] });
+  it.fmv = Store.sanitizeFmv({ value: 2149, low: 1999, high: 2299, count: 4, checkedAt: '2026-10-12T18:00:00+00:00', query: 'Apple X', pick: 'ebay_sold', bySource: { ebay_sold: { median: 2000, low: 1800, high: 2200, count: 5, sources: [{ title: 'e', source: 'eBay', price: 2000, link: 'https://ebay.com/itm/1' }] } }, sources: [{ title: 'A', source: 'B', price: 2099, link: 'https://a' }, { title: 'bad', link: 'javascript:x' }] });
   S.items.push(it); const rows = M.rowsFromState(S, 'u'); const r = [...rows.items.values()][0];
-  ok(r.fmv_value === 2149 && r.fmv_count === 4 && r.fmv_sources[1].link === '' && r.fmv_checked_at === '2026-10-12T18:00:00.000Z', 'fmv → row (unsafe link blanked)');
+  ok(r.fmv_value === 2149 && r.fmv_count === 4 && r.fmv_sources.links[1].link === '' && r.fmv_sources.pick === 'ebay_sold' && r.fmv_sources.ebay_sold.count === 5 && r.fmv_checked_at === '2026-10-12T18:00:00.000Z', 'fmv → row (unsafe link blanked)');
   const back = M.stateFromRows({ items: [{ ...r, created_at: '2026-01-01', updated_at: '2026-01-01' }] }).items[0];
   ok(JSON.stringify(back.fmv) === JSON.stringify(it.fmv), 'fmv row round-trip');
   const none = M.stateFromRows({ items: [{ ...r, fmv_value: null }] }).items[0]; ok(none.fmv === null, 'no fmv → null'); }

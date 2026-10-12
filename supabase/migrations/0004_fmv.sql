@@ -9,8 +9,10 @@ alter table public.items add column if not exists fmv_sources jsonb;
 alter table public.items add column if not exists fmv_query text;
 do $$
 begin
-  if not exists (select 1 from pg_constraint where conname = 'items_fmv_sources_array' and conrelid = 'public.items'::regclass) then
-    alter table public.items add constraint items_fmv_sources_array check (fmv_sources is null or (jsonb_typeof(fmv_sources) = 'array' and jsonb_array_length(fmv_sources) <= 10));
+  -- fmv_sources holds both sources: {"pick": "ebay_sold"|"google_new"|"manual", "links": [...], "ebay_sold": {...}, "google_new": {...}}
+  alter table public.items drop constraint if exists items_fmv_sources_array;
+  if not exists (select 1 from pg_constraint where conname = 'items_fmv_sources_shape' and conrelid = 'public.items'::regclass) then
+    alter table public.items add constraint items_fmv_sources_shape check (fmv_sources is null or (jsonb_typeof(fmv_sources) in ('object', 'array') and octet_length(fmv_sources::text) <= 20000));
   end if;
   if not exists (select 1 from pg_constraint where conname = 'items_fmv_query_len' and conrelid = 'public.items'::regclass) then
     alter table public.items add constraint items_fmv_query_len check (fmv_query is null or length(fmv_query) <= 200);

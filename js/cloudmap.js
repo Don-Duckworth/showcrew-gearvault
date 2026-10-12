@@ -37,7 +37,7 @@ export function rowsFromState(S, uid) {
       weight: num(i.weight), weight_unit: i.weightUnit, notes: i.notes, tags: i.tags.slice(),
       parent_id: parent, part_type: parent ? (i.partType === 'installed' ? 'installed' : 'accessory') : null,
       fmv_value: i.fmv ? i.fmv.value : null, fmv_low: i.fmv ? i.fmv.low : null, fmv_high: i.fmv ? i.fmv.high : null, fmv_count: i.fmv ? i.fmv.count : null,
-      fmv_checked_at: i.fmv ? i.fmv.checkedAt : null, fmv_sources: i.fmv ? i.fmv.sources : null, fmv_query: i.fmv ? i.fmv.query || null : null,
+      fmv_checked_at: i.fmv ? i.fmv.checkedAt : null, fmv_sources: i.fmv ? { pick: i.fmv.pick, links: i.fmv.sources, ...i.fmv.bySource } : null, fmv_query: i.fmv ? i.fmv.query || null : null,
     });
     for (const a of i.atts) {
       put('attachments', { id: a.id, owner_id: uid, item_id: i.id, name: a.name, mime: a.type || '', size: a.size || 0, kind: a.kind,
@@ -59,6 +59,7 @@ export function rowsFromState(S, uid) {
   return out;
 }
 
+const fmvSrc = j => (Array.isArray(j) ? { sources: j, pick: 'google_new', bySource: {} } : j && typeof j === 'object' ? { sources: j.links || [], pick: j.pick, bySource: { ebay_sold: j.ebay_sold, google_new: j.google_new } } : { sources: [], bySource: {} });
 /** Rows (arrays straight from PostgREST) → sanitized app state. */
 export function stateFromRows(R) {
   const settings = Store.defaultSettings();
@@ -73,7 +74,7 @@ export function stateFromRows(R) {
     id: r.id, name: r.name, category: r.category, make: r.make, model: r.model, serial: r.serial, emx: r.electromaxx_no || '', qty: r.qty, status: r.status,
     purchaseDate: r.purchase_date || '', price: num(r.price), currency: r.currency, currentValue: num(r.current_value), vendor: r.vendor, origin: r.origin,
     weight: num(r.weight), weightUnit: r.weight_unit, notes: r.notes, tags: r.tags || [], parentId: r.parent_id || '', partType: r.part_type || '',
-    fmv: r.fmv_value == null ? null : { value: num(r.fmv_value), low: num(r.fmv_low), high: num(r.fmv_high), count: r.fmv_count, checkedAt: r.fmv_checked_at, sources: r.fmv_sources || [], query: r.fmv_query || '' }, created: ms(r.created_at), updated: ms(r.updated_at),
+    fmv: r.fmv_value == null ? null : { value: num(r.fmv_value), low: num(r.fmv_low), high: num(r.fmv_high), count: r.fmv_count, checkedAt: r.fmv_checked_at, query: r.fmv_query || '', ...fmvSrc(r.fmv_sources) }, created: ms(r.created_at), updated: ms(r.updated_at),
     atts: (attBy.get(r.id) || []).sort((a, b) => ms(a.added_at) - ms(b.added_at)).map(a => ({ id: a.id, name: a.name, type: a.mime, size: Number(a.size) || 0, kind: a.kind, added: ms(a.added_at), path: a.path, thumb: a.thumb_path })),
   }, settings));
   fixParents(items);
