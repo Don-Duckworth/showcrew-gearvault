@@ -387,3 +387,10 @@ body.readonly #addBtn, body.readonly [data-act=newItem], body.readonly [data-act
 .fmverr { color: var(--amber); font-size: 12.5px; } .fmverr a, .warn a, .fmvinfo a { color: var(--cyan); }
 .fmvinfo { margin-top: 6px; } .fmvinfo a { margin-right: 6px; }
 .g-val .fmvchk { color: var(--dim); font-size: 10.5px; }
+.fmvt .sc { min-width: 150px; } .fmvt .sc small { display: block; color: var(--dim); font-size: 11px; margin: 2px 0 3px; }
+.fmvt .sc.sugg { background: rgba(0, 229, 255, .06); }
+.fmvt .pickv { display: inline-flex; align-items: center; gap: 6px; cursor: pointer; white-space: nowrap; } .fmvt .pickv b { color: var(--cyan); }
+.fmvt .pickv input[type=radio] { width: 18px; height: 18px; accent-color: var(--cyan); }
+.fmvt .star { color: var(--amber); font-size: 11px; }
+.fmvt .use { min-width: 110px; } .fmvt .use .inp.sm { min-height: 34px; width: 96px; font-size: 13px; margin-top: 4px; } .fmvt .usev { font-size: 12px; margin-top: 3px; } .fmvt .usev b { color: var(--cyan); }
+.fmvt .sc a { display: block; font-size: 12px; color: var(--cyan); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 170px; }

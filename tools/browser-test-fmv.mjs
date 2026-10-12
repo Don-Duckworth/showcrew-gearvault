@@ -38,13 +38,18 @@ async function seed(page) {
 const MOCK = () => {
   window.__fnCalls = [];
   window.__fakeFn = async (name, body) => {
-    window.__fnCalls.push(body.items.length);
-    const P = { macbook: [2899, 3099, 2999, 3199, 9999, 49], studio: [3599, 3799, 3699, 3899], rme: [2190, 2290], fireface: [2190, 2290], 'ddr5': [150, 170, 160, 155] };
-    return { status: 200, body: { checked_at: '2026-10-12T18:00:00.000Z', results: body.items.map(it => {
-      const k = Object.keys(P).find(k => it.query.toLowerCase().includes(k));
-      if (!k) return { item_id: it.item_id, query: it.query, median: null, low: null, high: null, count: 0, total: 0, currency: 'USD', sources: [] };
-      const prices = P[k], est = window.__gv.Fmv.estimate(prices);
-      return { item_id: it.item_id, query: it.query, ...est, currency: 'USD', sources: prices.slice(0, 3).map((p, i) => ({ title: `SAMPLE ${k} listing ${i + 1}`, source: ['Best Buy', 'B&H', 'eBay'][i], price: p, link: `https://example.com/${k}/${i}` })) };
+    window.__fnCalls.push([body.items.length, body.sources.join('+')]);
+    const F = window.__gv.Fmv;
+    const G = { macbook: [2899, 3099, 2999, 3199, 9999, 49], studio: [3599, 3799, 3699, 3899], fireface: [2190, 2290], ddr5: [150, 170, 160, 155] };
+    const E = { macbook: [2100, 2200, 2300, 2250, 90], studio: [2600, 2800], ddr5: [80, 90, 85] };
+    const blk = (P, k, src) => { if (!k || !P[k]) return { median: null, low: null, high: null, count: 0, total: 0, sources: [] }; const est = F.estimate(P[k]);
+      return { ...est, sources: P[k].slice(0, 2).map((p, i) => ({ title: `SAMPLE ${k} ${i}`, source: src === 'ebay_sold' ? 'eBay' : ['Best Buy', 'B&H'][i], price: p, link: `https://example.com/${src}/${k}/${i}` })) }; };
+    return { status: 200, body: { checked_at: '2026-10-12T18:00:00.000Z', sources: body.sources, results: body.items.map(it => {
+      const q = it.query.toLowerCase(), k = Object.keys(G).find(k => q.includes(k));
+      const out = { item_id: it.item_id, query: it.query };
+      if (body.sources.includes('ebay_sold')) out.ebay_sold = blk(E, k, 'ebay_sold');
+      if (body.sources.includes('google_new')) out.google_new = blk(G, k, 'google_new');
+      out.suggested = F.suggest(out); return out;
     }) } };
   };
 };
@@ -67,40 +72,50 @@ await page.click('.overlay [data-close]');
 // with prices
 await page.evaluate(MOCK);
 await page.click('[data-act=fmvOpen]'); await page.click('input[value=novalue]');
-ok(/3 items/.test(await page.locator('#fmvCount').innerText()), 'scope "without current value" → 3 (installed RAM + sold excluded)');
+ok(/3 items<\/b> × 2 = <b>6 searches/.test(await page.locator('#fmvCount').innerHTML()), 'scope "without current value" → 3 items × 2 sources = 6 searches');
+await page.uncheck('[data-fmvsrc=ebay_sold]'); ok(/× 1 = <b>3 searches/.test(await page.locator('#fmvCount').innerHTML()), 'toggle off eBay → 1 search/item');
+await page.check('[data-fmvsrc=ebay_sold]');
 await page.click('input[value=all]'); await page.click('#fmvGo');
 await page.waitForFunction(() => /Done/.test(document.querySelector('#fmvProg span').textContent));
 const sent = await page.evaluate(() => window.__gv.layers.at(-1)._rows.map(r => r.query));
 ok(sent.every(q => !/sample|SAMPLE-/i.test(q)) && sent.includes('Apple MacBook Pro 16 M3 Max Show laptop A'), 'queries built client-side without SAMPLE / serials: ' + JSON.stringify(sent));
 const rows = page.locator('#fmvBody tr');
 ok(await rows.count() === 4, 'review table has 4 rows');
-const mbpRow = rows.filter({ hasText: 'Show laptop A' });
-ok(/\$3,049/.test(await mbpRow.locator('.sug').innerText()) && /\$2,899–\$3,199/.test(await mbpRow.innerText()) && (await mbpRow.locator('.src a').count()) === 3, 'MacBook: IQR median $3,049, range, 3 source links');
-ok(await rows.filter({ hasText: 'RME' }).locator('[data-fmvck]').isDisabled(), 'EUR item cannot be applied (value is USD)');
+const mbp = () => rows.filter({ hasText: 'Show laptop A' }), studio = () => rows.filter({ hasText: 'Mac Studio' });
+ok(/\$2,225/.test(await mbp().locator('td.sc').nth(0).innerText()) && /suggested/.test(await mbp().locator('td.sc').nth(0).innerText()) && /\$3,049/.test(await mbp().locator('td.sc').nth(1).innerText()), 'MacBook: both medians shown, eBay sold ($2,225, IQR) suggested over Google ($3,049)');
+ok(/suggested/.test(await studio().locator('td.sc').nth(1).innerText()) && /\$2,700/.test(await studio().locator('td.sc').nth(0).innerText()), 'Mac Studio: eBay has only 2 → Google suggested, eBay median still shown');
+ok(await rows.filter({ hasText: 'RME' }).locator('[data-fmvck]').isDisabled(), 'EUR item cannot be applied (prices are USD)');
 const odd = rows.filter({ hasText: 'Zzqx' });
-ok(/No prices found/.test(await odd.innerText()) && await odd.locator('[data-fmvck]').isDisabled(), 'no-results row handled');
+ok(/No prices/.test(await odd.innerText()) && await odd.locator('[data-fmvck]').isDisabled(), 'no-results row handled');
 await odd.locator('[data-fmvq]').fill('Apple Mac Studio M2 Ultra'); await odd.locator('[data-fmvretry]').click();
 await page.waitForFunction(() => [...document.querySelectorAll('#fmvBody tr')].some(t => /Zzqx/.test(t.textContent) && /\$3,749/.test(t.textContent)));
 ok(true, 'edited query + retry on one row → result');
-await hideToast(page); await page.locator('.overlay .modal-card').screenshot({ path: OUT + 'desktop-fmv-review.png' });
+// user picks Google for the MacBook, own value for Mac Studio
+await mbp().locator('input[value=google_new]').check();
+ok(/→ \$3,049/.test(await mbp().locator('.usev').innerText()), 'pick other source → Use shows Google $3,049');
+await studio().locator('[data-fmvcustom]').fill('3300');
+ok(/→ \$3,300/.test(await studio().locator('.usev').innerText()) && await studio().locator('input[value=manual]').isChecked(), 'own value typed → selected');
+await page.evaluate(() => { document.activeElement.blur(); document.querySelector('.fmvwrap').scrollLeft = 0; }); await hideToast(page); await page.locator('.overlay .modal-card').screenshot({ path: OUT + 'desktop-fmv-review.png' });
 ok((await fdb(page)).items.find(i => i.id === ID.mbp).current_value === 2500, 'nothing changed before Apply');
-await rows.filter({ hasText: 'Show laptop A' }).locator('[data-fmvck]').uncheck();
+await odd.locator('[data-fmvck]').uncheck();
 ok(/2 of 4 selected/.test(await page.locator('#fmvSel').innerText()), 'checkbox deselects');
 await page.click('#fmvApply'); await settled(page);
 let t = (await fdb(page)).items; const by = id => t.find(i => i.id === id);
-ok(by(ID.mbp).current_value === 2500 && by(ID.mbp).fmv_value == null, 'unchecked item untouched');
-ok(by(ID.studio).current_value === 3749 && by(ID.studio).fmv_value === 3749 && by(ID.studio).fmv_low === 3599 && by(ID.studio).fmv_count === 4 && by(ID.studio).fmv_sources.length === 3 && by(ID.studio).fmv_query === 'Apple Mac Studio M2 Ultra' && by(ID.studio).fmv_checked_at, 'applied: current_value = median (whole $) + fmv_* stored');
-ok(by(ID.odd).current_value === 3749 && by(ID.eur).current_value == null && by(ID.ram).fmv_value == null, 'retried row applied; EUR + installed untouched');
+ok(by(ID.odd).current_value == null && by(ID.odd).fmv_value == null, 'unchecked item untouched');
+const m = by(ID.mbp);
+ok(m.current_value === 3049 && m.fmv_value === 3049 && m.fmv_sources.pick === 'google_new' && m.fmv_sources.ebay_sold.median === 2225 && m.fmv_sources.google_new.count === 4 && m.fmv_sources.links.length === 2 && m.fmv_checked_at && m.fmv_query, 'applied Google pick; fmv_sources stores both sources: ' + JSON.stringify(m.fmv_sources).slice(0, 160));
+ok(by(ID.studio).current_value === 3300 && by(ID.studio).fmv_sources.pick === 'manual' && by(ID.studio).fmv_sources.ebay_sold.count === 2, 'own value applied, both source stats kept');
+ok(by(ID.eur).current_value == null && by(ID.ram).fmv_value == null, 'EUR + installed untouched');
 ok(/value checked Oct 12, 2026/.test(await page.locator('.gear[data-id="' + ID.studio + '"]').innerText()), '"value checked <date>" on the item');
-ok(JSON.stringify(await page.evaluate(() => window.__fnCalls)) === '[4,1]', 'batched: one call for 4 items, 1 for the retry');
-// per-item lookup from the editor
+ok(JSON.stringify(await page.evaluate(() => window.__fnCalls)) === '[[4,"ebay_sold+google_new"],[1,"ebay_sold+google_new"]]', 'batched: one call for 4 items, 1 for the retry, both sources');
+// per-item lookup from the editor (suggested = eBay sold for the MacBook)
 await page.click(`.gear[data-id="${ID.mbp}"]`); await page.waitForSelector('[data-act=fmvItem]');
 await page.click('[data-act=fmvItem]'); await page.waitForFunction(() => /Done/.test(document.querySelector('#fmvProg span')?.textContent || ''));
 await page.click('#fmvApply');
-ok(await page.locator('[data-f=currentValue]').inputValue() === '3049' && /Value checked/.test(await page.locator('#fmvInfo').innerText()), 'editor: Look up value fills the field + shows checked info');
-ok((await fdb(page)).items.find(i => i.id === ID.mbp).current_value === 2500, 'editor lookup not saved until Save');
+ok(await page.locator('[data-f=currentValue]').inputValue() === '2225' && /eBay sold/.test(await page.locator('#fmvInfo').innerText()), 'editor: Look up value fills suggested eBay value + shows both sources');
+ok((await fdb(page)).items.find(i => i.id === ID.mbp).current_value === 3049, 'editor lookup not saved until Save');
 await page.click('.overlay [data-act=saveItem]'); await settled(page);
-ok((await fdb(page)).items.find(i => i.id === ID.mbp).current_value === 3049, 'saved after Save');
+ok((await fdb(page)).items.find(i => i.id === ID.mbp).current_value === 2225, 'saved after Save');
 // offline
 await ctx.setOffline(true); await page.waitForTimeout(300);
 ok(await page.locator('[data-act=fmvOpen]').isDisabled(), 'Update values disabled offline');

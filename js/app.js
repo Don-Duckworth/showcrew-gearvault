@@ -294,7 +294,7 @@ function openItemEditor(item, isNew = false, { returnTo = null } = {}) {
       ${f('vendor', 'Vendor', 'placeholder="Store / seller" list="dl-vendors" autocomplete="off"')}
       ${f('currentValue', 'Current value (each) — overrides price on carnets', 'type="number" inputmode="decimal" step="0.01" min="0" placeholder="Defaults to purchase price"', 'span2')}
       <div class="span2" style="align-self:center"><p class="hint">Carnets need the <b>current fair market value</b>, not what you paid. Leave blank to use the purchase price.</p>
-        <div class="row wrap" style="margin-top:6px"><button class="btn sm" type="button" data-act="fmvItem" ${readOnly() ? 'disabled' : ''}>⟳ Look up value</button><span class="hint">1 SerpApi search · you review first</span></div>
+        <div class="row wrap" style="margin-top:6px"><button class="btn sm" type="button" data-act="fmvItem" ${readOnly() ? 'disabled' : ''}>⟳ Look up value</button><span class="hint">eBay sold + Google · you review first</span></div>
         <p class="hint fmvinfo" id="fmvInfo"></p></div>
     </div></div>
     <div class="section"><div class="lbl">Carnet / customs</div><div class="grid4">
@@ -326,14 +326,15 @@ const FMV_ERR = {
   bad_key: 'SerpApi rejected the API key — check the SERPAPI_KEY secret.', quota: 'SerpApi search quota used up for this month.',
   mfa_required: 'Two-factor verification is required — sign out and back in.', unauthorized: 'Session expired — sign in again.',
   timeout: 'SerpApi timed out — retry.', upstream: 'SerpApi error — retry later.', skipped: 'Skipped (lookups stopped).', bad_item: 'Empty search text.',
-  network: 'Could not reach the lookup function.',
+  network: 'Could not reach the lookup function.', no_results: 'No listings found', sold_unavailable: 'Sold listings unavailable (eBay restricts them)',
 };
 const fmvErrText = c => FMV_ERR[c] || esc(c || 'Lookup failed');
+let fmvSrcPref = ['ebay_sold', 'google_new'];
 function setFmvButtons() { $$('[data-act=fmvOpen],[data-act=fmvItem]').forEach(b => { b.disabled = readOnly(); b.title = readOnly() ? 'Needs a connection' : ''; }); }
 /** Call fmv-lookup for [{item_id, query}] (≤ MAX_PER_CALL). Returns { results } or throws { code }. */
-async function fmvInvoke(list) {
+async function fmvInvoke(list, sources) {
   if (isOffline() || !sb) throw Object.assign(new Error('offline'), { code: 'network' });
-  const { data, error } = await sb.functions.invoke('fmv-lookup', { body: { items: list } });
+  const { data, error } = await sb.functions.invoke('fmv-lookup', { body: { items: list, sources } });
   if (error) {
     let code = 'network', body = null;
     try { body = await error.context?.json?.(); } catch { /* not json */ }
@@ -342,27 +343,29 @@ async function fmvInvoke(list) {
   }
   return data;
 }
-async function fmvRunRows(rows, onProgress) {
-  let done = 0;
-  for (let ix = 0; ix < rows.length; ix += Fmv.MAX_PER_CALL) {
-    const batch = rows.slice(ix, ix + Fmv.MAX_PER_CALL).filter(r => r.query);
-    rows.slice(ix, ix + Fmv.MAX_PER_CALL).filter(r => !r.query).forEach(r => { r.res = { error: 'bad_item' }; });
+const fmvPrep = (r, x, at) => { r.res = { ...x, checked_at: at }; r.pick = x?.suggested || null; r.checked = !!r.pick; };
+async function fmvRunRows(rows, sources, onProgress) {
+  const N = Fmv.MAX_PER_CALL;
+  for (let ix = 0; ix < rows.length; ix += N) {
+    const chunk = rows.slice(ix, ix + N), batch = chunk.filter(r => r.query);
+    chunk.filter(r => !r.query).forEach(r => { r.res = { error: 'bad_item' }; });
     if (batch.length) {
       try {
-        const data = await fmvInvoke(batch.map(r => ({ item_id: r.id, query: r.query })));
+        const data = await fmvInvoke(batch.map(r => ({ item_id: r.id, query: r.query })), sources);
         const by = new Map((data?.results || []).map(x => [x.item_id, x]));
-        batch.forEach(r => { r.res = by.get(r.id) || { error: 'upstream' }; r.res.checked_at = data?.checked_at; });
+        batch.forEach(r => fmvPrep(r, by.get(r.id) || { error: 'upstream' }, data?.checked_at));
       } catch (e) {
         batch.forEach(r => { r.res = { error: e.code }; });
-        if (['missing_key', 'mfa_required', 'unauthorized', 'network'].includes(e.code)) { rows.slice(ix + Fmv.MAX_PER_CALL).forEach(r => { r.res = { error: e.code }; }); onProgress(rows.length, e.code); return e.code; }
+        if (['missing_key', 'mfa_required', 'unauthorized', 'network'].includes(e.code)) { rows.slice(ix + N).forEach(r => { r.res = { error: e.code }; }); onProgress(rows.length); return e.code; }
       }
     }
-    done = Math.min(rows.length, ix + Fmv.MAX_PER_CALL); onProgress(done);
-    if (rows.slice(0, done).some(r => r.res?.error === 'quota' || r.res?.error === 'bad_key')) { rows.slice(done).forEach(r => { r.res = { error: 'skipped' }; }); onProgress(rows.length); return 'stopped'; }
+    onProgress(Math.min(rows.length, ix + N));
+    const stop = rows.slice(0, ix + N).find(r => r.res?.stop)?.res.stop;
+    if (stop) { rows.slice(ix + N).forEach(r => { r.res = { error: 'skipped' }; }); onProgress(rows.length); return stop; }
   }
   return null;
 }
-const FMV_NOTE = '<p class="hint fmvnote">⚠ Google Shopping mostly lists <b>new retail</b> prices, so used gear may be overstated — edit the value if needed. Carnets want the current fair market value.</p>';
+const FMV_NOTE = '<p class="hint fmvnote">⚠ <b>eBay sold</b> prices are what used gear actually sold for — suggested when there are at least 3. <b>Google Shopping</b> mostly lists <b>new retail</b> prices, so used gear may be overstated. Pick either, or type your own value. Carnets want the current fair market value.</p>';
 function fmvOpen() {
   const all = S.items, filt = filteredItems(), noVal = S.items.filter(i => i.currentValue == null);
   const o = openLayer(`<div class="sheet-h"><div class="title">⟳ UPDATE VALUES</div><button class="iconbtn" data-close aria-label="Close">✕</button></div>
@@ -372,63 +375,77 @@ function fmvOpen() {
       <label class="radio"><input type="radio" name="fmvScope" value="novalue"> Items without a current value <small>(${noVal.length})</small></label>
       <label class="radio"><input type="checkbox" id="fmvInstalled"> Include parts marked <b>installed</b> (RAM, drives…)</label>
       <label class="radio"><input type="checkbox" id="fmvInactive"> Include sold / retired gear</label></div>
+    <div class="section"><div class="lbl">Price sources</div>
+      <label class="radio"><input type="checkbox" data-fmvsrc="ebay_sold" ${fmvSrcPref.includes('ebay_sold') ? 'checked' : ''}> eBay sold listings <small>(used — what it actually sold for)</small></label>
+      <label class="radio"><input type="checkbox" data-fmvsrc="google_new" ${fmvSrcPref.includes('google_new') ? 'checked' : ''}> Google Shopping <small>(mostly new retail)</small></label></div>
     <p class="hint" id="fmvCount"></p>
-    <p class="hint">Each item uses <b>1 SerpApi search</b>; the free plan allows about <b>100 searches a month</b>. Nothing changes until you review and apply.</p>
-    ${FMV_NOTE}
+    <p class="hint">Each source costs <b>1 SerpApi search per item</b> (both = 2 per item); the free plan allows about <b>100 searches a month</b>. Nothing changes until you review and apply.</p>
     <div class="row"><button class="btn ghost grow" data-close>Cancel</button><button class="btn primary grow" id="fmvGo">Look up values</button></div>`, { cls: 'small' });
+  const srcs = () => $$('[data-fmvsrc]:checked', o).map(x => x.dataset.fmvsrc);
   const pick = () => {
     const sc = $('input[name=fmvScope]:checked', o).value, inst = $('#fmvInstalled', o).checked, inact = $('#fmvInactive', o).checked;
     return (sc === 'filtered' ? filt : sc === 'novalue' ? noVal : all).filter(i => (inst || P.partTypeOf(i) !== 'installed') && (inact || inService(i)));
   };
-  const upd = () => { const n = pick().length; $('#fmvCount', o).innerHTML = `<b>${plural(n, 'item')}</b> → ${n} search${n === 1 ? '' : 'es'}`; $('#fmvGo', o).disabled = !n; };
+  const upd = () => { const n = pick().length, k = Fmv.searchesPerItem(srcs()), m = n * k; $('#fmvCount', o).innerHTML = `<b>${plural(n, 'item')}</b> × ${k} = <b>${m} search${m === 1 ? '' : 'es'}</b>`; $('#fmvGo', o).disabled = !n || !k; };
   o.addEventListener('change', upd); upd();
   o.addEventListener('click', e => {
     if (e.target.closest('[data-close]')) return closeLayer(o);
-    if (e.target.closest('#fmvGo')) { const list = pick(); closeLayer(o, true); fmvReview(list.map(i => ({ id: i.id, query: Fmv.buildQuery(i), checked: false, res: null }))); }
+    if (e.target.closest('#fmvGo')) { const list = pick(); fmvSrcPref = srcs(); closeLayer(o, true); fmvReview(list.map(i => ({ id: i.id, query: Fmv.buildQuery(i), res: null })), null, fmvSrcPref); }
   });
 }
-/** Review table. rows: [{id, query, res, checked}]. single = { d } when launched from the editor (applies to the draft). */
-function fmvReview(rows, single = null) {
+/** Review table. rows: [{id, query, res, pick, custom, checked}]. single = { d } when launched from the editor (applies to the draft). */
+function fmvReview(rows, single = null, sources = fmvSrcPref) {
   const item = r => (single ? single.d : itemById(r.id));
+  const usd = it => (it.currency || 'USD') === 'USD';
+  const has = (x, k) => !!(x && x[k] && !x[k].error && x[k].median != null);
+  const chosen = r => { const x = r.res; if (!x || x.error && !x.suggested) return null; if (r.pick === 'manual') return Store.parseNum(r.custom); return has(x, r.pick) ? Fmv.applyValue(x[r.pick].median) : null; };
+  const fmvOk = r => { const it = item(r); return !!(it && usd(it) && chosen(r) != null && chosen(r) >= 0); };
   const o = openLayer(`<div class="sheet-h"><div class="title">⟳ REVIEW VALUES</div><button class="iconbtn" data-close aria-label="Close">✕</button></div>
     <div id="fmvProg" class="fmvprog"><div class="bar"><i style="width:0%"></i></div><span>Looking up 0 / ${rows.length}…</span></div>
     <div id="fmvMsg"></div>${FMV_NOTE}
-    <div class="fmvwrap"><table class="fmvt"><thead><tr><th><input type="checkbox" id="fmvAll" aria-label="Select all"></th><th>Item</th><th class="r">Current</th><th class="r">Suggested</th><th class="r">Range</th><th class="r">#</th><th>Sources</th><th>Search</th></tr></thead><tbody id="fmvBody"></tbody></table></div>
+    <div class="fmvwrap"><table class="fmvt"><thead><tr><th><input type="checkbox" id="fmvAll" aria-label="Select all"></th><th>Item</th><th class="r">Current</th>${sources.includes('ebay_sold') ? '<th>eBay sold</th>' : ''}${sources.includes('google_new') ? '<th>Google new</th>' : ''}<th>Use</th><th>Search</th></tr></thead><tbody id="fmvBody"></tbody></table></div>
     <div class="sheet-f"><span class="hint grow" id="fmvSel"></span><button class="btn ghost" data-close>Cancel</button><button class="btn primary" id="fmvApply" disabled>Apply selected</button></div>`, { cls: 'wide' });
   o._rows = rows;
-  const fmvOk = r => { const it = item(r); return !!(it && r.res && !r.res.error && r.res.median != null && (it.currency || 'USD') === 'USD'); };
+  const srcCell = (r, k) => {
+    const x = r.res; if (!x || r.busy) return '<td class="sc"><span class="hint">…</span></td>';
+    const b = x[k]; if (!b) return `<td class="sc">${x.error ? `<span class="fmverr">${fmvErrText(x.error)}</span>` : '<span class="hint">—</span>'}</td>`;
+    if (b.error || b.median == null) return `<td class="sc"><span class="hint">${b.error ? fmvErrText(b.error) : 'No prices found'}</span></td>`;
+    const links = (b.sources || []).map(s => `<a href="${esc(s.link)}" target="_blank" rel="noopener noreferrer" title="${esc(s.title)}">${esc(s.source || 'link')} ${money(s.price, 'USD', false)}</a>`).join('');
+    return `<td class="sc ${x.suggested === k ? 'sugg' : ''}"><label class="pickv"><input type="radio" name="fmvp${r.ix}" value="${k}" ${r.pick === k ? 'checked' : ''}> <b>${money(Fmv.applyValue(b.median), 'USD', false)}</b>${x.suggested === k ? ' <span class="star">★ suggested</span>' : ''}</label>
+      <small>${money(b.low, 'USD', false)}–${money(b.high, 'USD', false)} · ${plural(b.count, 'price')}</small>${links}</td>`;
+  };
   const rowHTML = (r, ix) => {
-    const it = item(r); if (!it) return '';
-    const x = r.res, busy = r.busy || !x, usd = (it.currency || 'USD') === 'USD', okRes = x && !x.error && x.median != null && usd;
-    const src = okRes ? (x.sources || []).map(s => `<a href="${esc(s.link)}" target="_blank" rel="noopener noreferrer" title="${esc(s.title)}">${esc(s.source || 'link')} ${money(s.price, 'USD', false)}</a>`).join('') : '';
-    const status = busy ? '<span class="hint">…</span>' : x.error ? `<span class="fmverr">${fmvErrText(x.error)}</span>` : x.median == null ? '<span class="hint">No prices found — edit the search and retry</span>' : !usd ? `<span class="hint">${money(x.median, 'USD', false)} USD — item is in ${esc(it.currency)}, enter it by hand</span>` : '';
-    return `<tr data-ix="${ix}" class="${okRes ? '' : 'nores'}">
-      <td><input type="checkbox" data-fmvck ${okRes ? '' : 'disabled'} ${r.checked && okRes ? 'checked' : ''} aria-label="Apply"></td>
+    r.ix = ix; const it = item(r); if (!it) return '';
+    const x = r.res, done = x && !r.busy, ok = done && fmvOk(r);
+    const note = !done ? '' : !usd(it) ? `<span class="hint">Item is in ${esc(it.currency)} — prices are USD, enter by hand</span>` : x.error && !x.suggested && !x.ebay_sold && !x.google_new ? '' : !x.suggested ? '<span class="hint">No prices — edit the search and retry, or type a value</span>' : '';
+    return `<tr data-ix="${ix}" class="${ok ? '' : 'nores'}">
+      <td><input type="checkbox" data-fmvck ${ok ? '' : 'disabled'} ${r.checked && ok ? 'checked' : ''} aria-label="Apply"></td>
       <td class="nm">${esc(itemTitle(it))}${it.fmv?.checkedAt ? `<small>checked ${esc(fmvDate(it.fmv.checkedAt))}</small>` : ''}</td>
       <td class="r">${it.currentValue != null ? money(Store.parseNum(it.currentValue), it.currency, false) : '<span class="hint">—</span>'}</td>
-      <td class="r sug">${okRes ? money(Fmv.applyValue(x.median), 'USD', false) : status}</td>
-      <td class="r">${okRes ? `${money(x.low, 'USD', false)}–${money(x.high, 'USD', false)}` : ''}</td>
-      <td class="r">${okRes ? x.count : ''}</td>
-      <td class="src">${src}</td>
-      <td class="q"><div class="joined"><input class="inp" data-fmvq value="${esc(r.query)}" maxlength="${Fmv.MAX_QUERY}" aria-label="Search text"><button class="btn sm ghost" data-fmvretry title="Search again (1 search)">↻</button></div></td></tr>`;
+      ${sources.includes('ebay_sold') ? srcCell(r, 'ebay_sold') : ''}${sources.includes('google_new') ? srcCell(r, 'google_new') : ''}
+      <td class="use">${done && usd(it) ? `<label class="pickv"><input type="radio" name="fmvp${ix}" value="manual" ${r.pick === 'manual' ? 'checked' : ''}> Own</label><input class="inp sm" data-fmvcustom type="number" min="0" step="1" inputmode="numeric" value="${esc(r.custom ?? '')}" placeholder="$" aria-label="Your value"><div class="usev">${ok ? `→ <b>${money(chosen(r), 'USD', false)}</b>` : ''}</div>` : ''}${note}</td>
+      <td class="q"><div class="joined"><input class="inp" data-fmvq value="${esc(r.query)}" maxlength="${Fmv.MAX_QUERY}" aria-label="Search text"><button class="btn sm ghost" data-fmvretry title="Search again (${Fmv.searchesPerItem(sources)} search${Fmv.searchesPerItem(sources) === 1 ? '' : 'es'})">↻</button></div></td></tr>`;
   };
-  const paint = () => {
-    $('#fmvBody', o).innerHTML = rows.map(rowHTML).join('');
-    const sel = rows.filter(r => r.checked && fmvOk(r));
-    $('#fmvSel', o).textContent = `${sel.length} of ${rows.length} selected`; $('#fmvApply', o).disabled = !sel.length || readOnly();
-  };
+  const foot = () => { const sel = rows.filter(r => r.checked && fmvOk(r)); $('#fmvSel', o).textContent = `${sel.length} of ${rows.length} selected`; $('#fmvApply', o).disabled = !sel.length || readOnly(); };
+  const paint = () => { $('#fmvBody', o).innerHTML = rows.map(rowHTML).join(''); foot(); };
+  const paintRow = r => { const tr = $(`#fmvBody tr[data-ix="${r.ix}"]`, o); if (tr) tr.outerHTML = rowHTML(r, r.ix); foot(); };
   const msg = code => { $('#fmvMsg', o).innerHTML = code ? `<p class="warn">${fmvErrText(code)}</p>` : ''; };
-  const prog = (n, code) => {
+  const prog = n => {
     const p = $('#fmvProg', o); if (!p) return;
-    $('i', p).style.width = `${Math.round(100 * n / rows.length)}%`; $('span', p).textContent = n >= rows.length ? `Done — ${rows.filter(r => r.res && !r.res.error && r.res.median != null).length} of ${rows.length} found` : `Looking up ${n} / ${rows.length}…`;
-    rows.forEach(r => { if (r.res && r.checked == null) r.checked = fmvOk(r); }); if (code) msg(code); paint();
+    $('i', p).style.width = `${Math.round(100 * n / rows.length)}%`; $('span', p).textContent = n >= rows.length ? `Done — ${rows.filter(r => r.res?.suggested).length} of ${rows.length} found` : `Looking up ${n} / ${rows.length}…`;
+    paint();
   };
-  rows.forEach(r => { r.checked = null; });
-  paint(); fmvRunRows(rows, prog).then(code => { if (code && code !== 'stopped') msg(code); else if (code === 'stopped') msg(rows.find(r => r.res?.error === 'quota') ? 'quota' : 'bad_key'); });
-  o.addEventListener('input', e => { const q = e.target.closest('[data-fmvq]'); if (q) rows[+q.closest('tr').dataset.ix].query = Fmv.cleanQuery(q.value); });
+  paint(); fmvRunRows(rows, sources, prog).then(code => { if (code) msg(code); });
+  o.addEventListener('input', e => {
+    const q = e.target.closest('[data-fmvq]'); if (q) { rows[+q.closest('tr').dataset.ix].query = Fmv.cleanQuery(q.value); return; }
+    const c = e.target.closest('[data-fmvcustom]');
+    if (c) { const r = rows[+c.closest('tr').dataset.ix]; r.custom = c.value; r.pick = 'manual'; r.checked = c.value !== ''; const tr = c.closest('tr'); $('input[value=manual]', tr).checked = true; $('[data-fmvck]', tr).disabled = !fmvOk(r); $('[data-fmvck]', tr).checked = r.checked && fmvOk(r); $('.usev', tr).innerHTML = fmvOk(r) ? `→ <b>${money(chosen(r), 'USD', false)}</b>` : ''; foot(); }
+  });
   o.addEventListener('change', e => {
     if (e.target.id === 'fmvAll') { rows.forEach(r => { r.checked = e.target.checked; }); return paint(); }
-    const c = e.target.closest('[data-fmvck]'); if (c) { rows[+c.closest('tr').dataset.ix].checked = c.checked; paint(); }
+    const tr = e.target.closest('tr[data-ix]'); if (!tr) return; const r = rows[+tr.dataset.ix];
+    if (e.target.matches('[data-fmvck]')) { r.checked = e.target.checked; return foot(); }
+    if (e.target.type === 'radio') { r.pick = e.target.value; r.checked = fmvOk(r); paintRow(r); if (r.pick === 'manual') $(`#fmvBody tr[data-ix="${r.ix}"] [data-fmvcustom]`, o)?.focus(); }
   });
   o.addEventListener('click', async e => {
     if (e.target.closest('[data-close]')) return closeLayer(o);
@@ -436,18 +453,20 @@ function fmvReview(rows, single = null) {
     if (rb) {
       if (readOnly()) return toast('Offline — reconnect to look up values');
       const r = rows[+rb.closest('tr').dataset.ix]; if (!r.query) return toast('Enter search text first');
-      r.busy = true; paint(); msg('');
-      try { const d = await fmvInvoke([{ item_id: r.id, query: r.query }]); r.res = { ...(d.results || [])[0], checked_at: d.checked_at }; }
+      r.busy = true; paintRow(r); msg('');
+      try { const d = await fmvInvoke([{ item_id: r.id, query: r.query }], sources); fmvPrep(r, (d.results || [])[0] || { error: 'upstream' }, d.checked_at); if (r.res.stop) msg(r.res.stop); }
       catch (er) { r.res = { error: er.code }; msg(er.code); }
-      r.busy = false; r.checked = fmvOk(r); paint(); return;
+      r.busy = false; paintRow(r); return;
     }
     if (e.target.closest('#fmvApply')) {
       if (readOnly()) return toast('Offline — read-only. Reconnect to make changes.');
       const sel = rows.filter(r => r.checked && fmvOk(r)); let n = 0;
       for (const r of sel) {
-        const it = item(r); if (!it) continue; const x = r.res;
-        it.currentValue = Fmv.applyValue(x.median);
-        it.fmv = Store.sanitizeFmv({ value: x.median, low: x.low, high: x.high, count: x.count, checkedAt: x.checked_at || new Date().toISOString(), query: r.query, sources: x.sources });
+        const it = item(r); if (!it) continue; const x = r.res, b = r.pick !== 'manual' ? x[r.pick] : null, v = chosen(r);
+        const bySource = Object.fromEntries(Fmv.SOURCES.filter(k => has(x, k)).map(k => [k, { median: x[k].median, low: x[k].low, high: x[k].high, count: x[k].count, sources: x[k].sources }]));
+        it.currentValue = v;
+        it.fmv = Store.sanitizeFmv({ value: b ? b.median : v, low: b ? b.low : null, high: b ? b.high : null, count: b ? b.count : 0, pick: r.pick,
+          checkedAt: x.checked_at || new Date().toISOString(), query: r.query, sources: b ? b.sources : [], bySource });
         if (!single) it.updated = Date.now();
         n++;
       }
@@ -458,13 +477,14 @@ function fmvReview(rows, single = null) {
   });
 }
 function renderFmvInfo() {
-  const el = $('#fmvInfo'); if (!el || !ui.edit) return; const f = ui.edit.d.fmv;
-  el.innerHTML = f ? `Value checked ${esc(fmvDate(f.checkedAt))}: median ${money(f.value, 'USD', false)} (${money(f.low, 'USD', false)}–${money(f.high, 'USD', false)}, ${plural(f.count, 'result')})${f.sources?.length ? ' · ' + f.sources.filter(s => s.link).map(s => `<a href="${esc(s.link)}" target="_blank" rel="noopener noreferrer">${esc(s.source || 'link')}</a>`).join(' ') : ''}` : '';
+  const el = $('#fmvInfo'); if (!el || !ui.edit) return; const f = ui.edit.d.fmv; if (!f) { el.innerHTML = ''; return; }
+  const part = k => { const b = f.bySource?.[k]; return b ? `${Fmv.SOURCE_LABEL[k]} ${money(b.median, 'USD', false)} (${money(b.low, 'USD', false)}–${money(b.high, 'USD', false)}, ${plural(b.count, 'price')})` : ''; };
+  el.innerHTML = `Value checked ${esc(fmvDate(f.checkedAt))} · used ${f.pick === 'manual' ? 'your own value' : esc(Fmv.SOURCE_LABEL[f.pick] || '')}${['ebay_sold', 'google_new'].map(part).filter(Boolean).map(t => ' · ' + t).join('')}${f.sources?.length ? '<br>' + f.sources.filter(s => s.link).map(s => `<a href="${esc(s.link)}" target="_blank" rel="noopener noreferrer">${esc(s.source || 'link')}</a>`).join(' ') : ''}`;
 }
 function fmvItem() {
   const E = ui.edit; if (!E) return;
   const q = Fmv.buildQuery(E.d); if (!q) return toast('Enter a make, model or name first');
-  fmvReview([{ id: E.d.id, query: q, res: null }], { d: E.d });
+  fmvReview([{ id: E.d.id, query: q, res: null }], { d: E.d }, fmvSrcPref);
 }
 // ----- parts (v2.2) -----
 const editSig = E => JSON.stringify([E.d, [...E.kits].sort(), E.newAtts, E.pendingDel]);

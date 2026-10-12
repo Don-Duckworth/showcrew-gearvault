@@ -132,22 +132,26 @@ which only matters for password resets. Free-plan projects pause after a week of
 
 ## Fair market value — *Update values* (v2.3)
 
-*Gear → ⟳ Update values* (or *Look up value* in an item's editor) estimates each item's current value from **Google Shopping via SerpApi**.
+*Gear → ⟳ Update values* (or *Look up value* in an item's editor) estimates each item's current value from **two SerpApi sources with one key**: **eBay sold listings** (`engine=ebay`, `_nkw`, `LH_Sold=1`, `LH_Complete=1`) and **Google Shopping** (`engine=google_shopping`, `gl=us`).
 
 1. Make a free account at https://serpapi.com and copy your **API key** (Dashboard → *Api Key*).
 2. Supabase → **Edge Functions → Secrets**: https://supabase.com/dashboard/project/ggtkglxvuxvmuqtpvlgs/functions/secrets →
    *Add new secret*: Name **`SERPAPI_KEY`**, Value = your SerpApi key → *Save*. No redeploy needed. (CLI: `supabase secrets set SERPAPI_KEY=…`.)
    Never put the key in `js/config.js` or the repo — only the Edge Function can read it, and it never returns it.
 3. In the app: choose scope (all gear / current filter / items without a current value; installed parts and sold/retired gear are skipped unless you tick
-   them), *Look up values*, then **review**: suggested median, range, number of prices, up to 5 source links. Edit a row's search text and ↻ retry,
-   untick anything you don't want, *Apply selected*. Only then is `current_value` set (median rounded to whole dollars) and the lookup stored in
-   `fmv_value / fmv_low / fmv_high / fmv_count / fmv_checked_at / fmv_sources / fmv_query`. Items show *value checked &lt;date&gt;*.
+   them) and sources (default both), *Look up values*, then **review**: per source the median, range, number of prices and up to 5 links. The
+   **suggested** value is the eBay sold median when it has ≥ 3 prices after outlier removal, else the Google median. Pick either source or type your
+   own value, edit a row's search text and ↻ retry, untick anything you don't want, *Apply selected*. Only then is `current_value` set (median rounded to whole dollars) and the lookup stored in
+   `fmv_value / fmv_low / fmv_high / fmv_count / fmv_checked_at / fmv_query`, with `fmv_sources` = `{pick, links, ebay_sold:{median,low,high,count,sources}, google_new:{…}}`. Items show *value checked &lt;date&gt;*.
 
 Notes:
-- **Quota**: 1 SerpApi search per item; the free plan is about **100 searches / month**. Lookups stop early if the quota or key fails.
+- **Quota**: 1 SerpApi search per item **per source** (both = 2 per item); the free plan is about **100 searches / month** (≈ 50 items with both). Lookups stop early if the quota or key fails.
+- **eBay sold caveat**: since Sep 2026 SerpApi lists its eBay *Sold/Complete* filters as deprecated (eBay put sold results behind a login). The
+  function only counts results that carry a sold marker; if none do it shows *Sold listings unavailable* and the Google value is suggested — the eBay
+  search is still billed, so untick eBay if that keeps happening.
 - **Accuracy**: Google Shopping mostly lists **new retail** prices, so used gear can be overstated — edit the value. Prices are USD (`gl=us`);
   items kept in another currency can't be auto-applied.
-- **How the number is made** (`js/fmv.js`, shared with the function): prices from `shopping_results`, outliers removed with a 1.5×IQR fence
+- **How the number is made** (`js/fmv.js`, shared with the function): prices from `shopping_results` / eBay `organic_results` (sponsored skipped), outliers removed with a 1.5×IQR fence
   (when ≥ 4 prices), median of the rest. The search text is make + model + name — never serials, Electromaxx numbers or "SAMPLE".
 - **Security**: `supabase/functions/fmv-lookup` is deployed with `verify_jwt = true` and additionally refuses sessions that aren't MFA-verified
   (`aal2`). It touches no database rows; the app saves what you apply. The button is disabled offline and the service worker never caches `/functions/v1/`.
