@@ -12,16 +12,14 @@ export function ago(days) {
   const y = Math.floor(days / 365.25); return `${Math.max(1, y)} yr ago`;
 }
 /** { state: 'none' | 'fresh' | 'stale', date, days, label, source }.
- *  The date is the item's Value as of; an item valued only by its purchase price falls back to its purchase date. */
+ *  Only the item's Value as of counts (within FRESH_DAYS = green); missing = stale. */
 export function valueAge(i, now = new Date()) {
-  if (unitValue(i) == null || !Number.isFinite(unitValue(i))) return { state: 'none', date: '', days: null, label: 'no value', source: '' };
-  const usesCurrent = i.currentValue != null && i.currentValue !== '';
-  let date = DATE_RE.test(i.valueAsOf || '') ? i.valueAsOf : '', source = 'value';
-  if (!date && !usesCurrent && DATE_RE.test(i.purchaseDate || '')) { date = i.purchaseDate; source = 'purchase'; }
-  if (!date) return { state: 'stale', date: '', days: null, label: 'no value date', source: '' };
+  // v2.4.1: only Value as of counts — no purchase-date fallback; any item without it is stale.
+  const date = DATE_RE.test(i.valueAsOf || '') ? i.valueAsOf : '', source = 'value';
+  if (!date) return { state: 'stale', date: '', days: null, label: 'no fair value date', source: '' };
   const days = dayNo(todayISO(now)) - dayNo(date);
   const fresh = days <= FRESH_DAYS;
-  const verb = source === 'purchase' ? 'purchased' : 'valued';
+  const verb = 'valued';
   return { state: fresh ? 'fresh' : 'stale', date, days, source, label: fresh ? `${verb} ${date} · ${ago(days)}` : `value >1 yr old · ${verb} ${date}` };
 }
 export const isStale = (i, now) => valueAge(i, now).state === 'stale';

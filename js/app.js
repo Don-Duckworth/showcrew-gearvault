@@ -13,7 +13,7 @@ import * as P from './parts.js';
 import * as Fmv from './fmv.js';
 import * as VD from './valdate.js';
 
-const APP_VERSION = '2.4.0';
+const APP_VERSION = '2.4.1';
 const $ = (sel, el = document) => el.querySelector(sel);
 const $$ = (sel, el = document) => [...el.querySelectorAll(sel)];
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -244,7 +244,7 @@ function gearRowHTML(i, { depth = 0, kids = null, flat = false } = {}) {
       ${partsTag || partOf || ptTag ? `<div class="g-parts">${ptTag}${partOf}${partsTag}</div>` : ''}
       ${flags ? `<div class="g-flags">${flags}</div>` : ''}</div>
     <div class="g-meta"><div>${esc(i.category)}</div><div class="row">${kits.map(k => `<span class="tag kit">▣ ${esc(k.name)}</span>`).join('')}${i.tags.map(t => `<span class="tag">#${esc(t)}</span>`).join('')}</div>${i.origin ? `<div>Origin: ${esc(i.origin)}</div>` : ''}</div>
-    <div class="g-val ${valCls(i)}" title="${esc(VD.valueAge(i).label)}">${v == null ? '<span style="color:var(--amber)">—</span>' : money(v * (i.qty || 1), i.currency)}<small>${i.qty > 1 ? `${i.qty} × ${money(v, i.currency)}` : i.currentValue != null ? 'current value' : v != null ? 'purchase' : 'no value'}</small>${vw ? `<small class="inclparts" title="Item + all its parts${vw.other ? ` (${vw.other} in another currency not included)` : ''}">${money(vw.value, vw.currency)} incl. parts</small>` : ''}${v != null ? `<small class="vage">${VD.valueAge(i).state === 'fresh' ? '✓' : '⚠'} ${esc(VD.valueAge(i).label)}</small>` : ''}</div>
+    <div class="g-val ${valCls(i)}" title="${esc(VD.valueAge(i).label)}">${v == null ? '<span style="color:var(--amber)">—</span>' : money(v * (i.qty || 1), i.currency)}<small>${i.qty > 1 ? `${i.qty} × ${money(v, i.currency)}` : i.currentValue != null ? 'current value' : v != null ? 'purchase' : 'no value'}</small>${vw ? `<small class="inclparts" title="Item + all its parts${vw.other ? ` (${vw.other} in another currency not included)` : ''}">${money(vw.value, vw.currency)} incl. parts</small>` : ''}<small class="vage">${VD.valueAge(i).state === 'fresh' ? '✓' : '⚠'} ${esc(VD.valueAge(i).label)}</small></div>
   </button>`;
 }
 function renderGearList() {
@@ -325,7 +325,7 @@ function renderValAge() {
   const f = $('#valFld'), el = $('#valAge'); if (!f || !ui.edit) return;
   const d = ui.edit.d, a = VD.valueAge({ ...d, currentValue: Store.parseNum(d.currentValue), price: Store.parseNum(d.price) });
   f.classList.toggle('val-fresh', a.state === 'fresh'); f.classList.toggle('val-stale', a.state === 'stale');
-  el.textContent = a.state === 'none' ? 'Value as of: set when you enter or look up a value' : `${a.state === 'fresh' ? '✓' : '⚠'} ${a.label}${a.state === 'stale' ? ' — update before a carnet' : ''}`;
+  el.textContent = `${a.state === 'fresh' ? '✓' : '⚠'} ${a.label}${a.state === 'stale' ? ' — update before a carnet' : ''}`;
 }
 /** Items on a trip (every line incl. installed sub-lines and folded parts) whose value is stale. */
 function staleOnTrip(t) {

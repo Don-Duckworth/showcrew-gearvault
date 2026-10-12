@@ -64,9 +64,9 @@ ok(fs.readFileSync(new URL('../js/fmv.js', import.meta.url), 'utf8') === fs.read
   let a = VD.valueAge({ currentValue: 100, valueAsOf: '2026-07-12' }, now); ok(a.state === 'fresh' && a.label === 'valued 2026-07-12 · 3 mo ago', 'fresh label ' + a.label);
   a = VD.valueAge({ currentValue: 100, valueAsOf: '2025-10-12' }, now); ok(a.state === 'fresh' && a.days === 365, 'exactly 365 days is still fresh');
   a = VD.valueAge({ currentValue: 100, valueAsOf: '2025-10-11' }, now); ok(a.state === 'stale' && /^value >1 yr old/.test(a.label), 'older than a year → stale');
-  ok(VD.valueAge({ currentValue: 100 }, now).state === 'stale' && VD.valueAge({ currentValue: 100 }, now).label === 'no value date', 'value without date → stale');
-  ok(VD.valueAge({ currentValue: null, price: null }, now).state === 'none', 'no value → none (not flagged)');
-  a = VD.valueAge({ price: 500, purchaseDate: '2026-09-01' }, now); ok(a.state === 'fresh' && a.source === 'purchase' && /^purchased/.test(a.label), 'price-only falls back to purchase date');
+  ok(VD.valueAge({ currentValue: 100 }, now).state === 'stale' && VD.valueAge({ currentValue: 100 }, now).label === 'no fair value date', 'value without date → stale');
+  ok(VD.valueAge({ currentValue: null, price: null }, now).state === 'stale', 'no value + no date → stale');
+  a = VD.valueAge({ price: 500, purchaseDate: '2026-09-01' }, now); ok(a.state === 'stale' && a.label === 'no fair value date', 'no purchase-date fallback: recent purchase without Value as of is red');
   ok(VD.valueAge({ currentValue: 0, valueAsOf: '2026-10-12' }, now).label === 'valued 2026-10-12 · today', 'zero value still dated, today');
   ok(VD.ago(10) === '10 d ago' && VD.ago(800) === '2 yr ago', 'ago()');
   const S = Store.emptyState(), it = Store.makeItem(S.settings); Object.assign(it, { name: 'X', currentValue: 5, valueAsOf: '2026-01-02' }); S.items.push(it);

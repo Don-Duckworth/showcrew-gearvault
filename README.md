@@ -161,8 +161,8 @@ Notes:
 
 Every item has a **Value as of** date (`items.value_as_of`, backfilled from `fmv_checked_at`). It is set to today when *Apply selected* / *Look up value*
 sets a value or when you type a current value — and stays editable. The current-value field and the value on each list row are outlined **green**
-(“✓ valued 2026-10-12 · 3 mo ago”) when the date is within 365 days and **red** (“⚠ value >1 yr old” / “no value date”) otherwise; an item valued only
-by its purchase price uses its purchase date. Trips show a red banner listing every stale line (incl. installed parts) with *Update values* for just
+(“✓ valued 2026-10-12 · 3 mo ago”) when the date is within 365 days and **red** (“⚠ value >1 yr old” / “no fair value date”) otherwise. Since v2.4.1 only *Value as of* counts — there is no
+purchase-date fallback; any item without it is red, counts in the stale filter and appears in the trip warning (parts included). Trips show a red banner listing every stale line (incl. installed parts) with *Update values* for just
 those items and a *Fix* link each; print / CSV export ask first. Gear filter: *Value >1 yr old / no date*. Inventory CSV and backups carry *Value as of*.
 
 ## Tests

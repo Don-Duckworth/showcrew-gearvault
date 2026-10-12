@@ -169,7 +169,7 @@ await page.waitForFunction(() => !document.querySelector('.overlay')).catch(() =
 // carnet warning
 await page.click('#nav [data-view=trips]'); await page.click('[data-act=openTrip]'); await page.waitForSelector('#staleBanner');
 const ban = await page.locator('#staleBanner').innerText();
-ok(/SAMPLE Old Starlink Mini/.test(ban) && /SAMPLE 64GB RAM/.test(ban) && !/Show laptop/.test(ban) && /no value date/.test(ban), 'carnet banner lists stale items incl. installed part: ' + ban.replace(/\s+/g, ' ').slice(0, 200));
+ok(/SAMPLE Old Starlink Mini/.test(ban) && /SAMPLE 64GB RAM/.test(ban) && !/Show laptop/.test(ban) && /no fair value date/.test(ban), 'carnet banner lists stale items incl. installed part: ' + ban.replace(/\s+/g, ' ').slice(0, 200));
 ok(await page.locator('#staleBanner [data-act=editItem]').count() === 2, 'Fix link per stale item');
 await hideToast(page); await page.locator('#staleBanner').scrollIntoViewIfNeeded(); await page.screenshot({ path: OUT + 'desktop-carnet-stale-warning.png' });
 await page.click('[data-act=fmvStale]'); await page.waitForSelector('#fmvGo');
@@ -188,7 +188,7 @@ ok(await page.locator('[data-act=fmvOpen]').isEnabled(), 're-enabled online');
 // sw never caches function calls
 const sw = await (await fetch(URL + 'sw.js')).text();
 ok(/functions\)\\\/v1/.test(sw) || /functions/.test(sw.match(/const NEVER = .*/)[0]), 'sw bypasses /functions/v1/');
-ok(/scgv-v2\.4\.0/.test(sw) && sw.includes("'./js/fmv.js'") && sw.includes("'./js/valdate.js'"), 'sw VERSION scgv-v2.4.0 precaches fmv.js + valdate.js');
+ok(/scgv-v2\.4\.1/.test(sw) && sw.includes("'./js/fmv.js'") && sw.includes("'./js/valdate.js'"), 'sw VERSION scgv-v2.4.1 precaches fmv.js + valdate.js');
 ok(!errs.length, 'no console errors ' + errs.join(' | '));
 await ctx.close();
 

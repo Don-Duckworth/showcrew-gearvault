@@ -1,7 +1,7 @@
 // ShowCrew GearVault service worker — offline app shell. Bump VERSION whenever files change.
 // Supabase (auth / database / storage) is NEVER cached: those requests are cross-origin and pass straight through,
 // and same-origin /auth|rest|storage|realtime|functions/v1 paths are explicitly bypassed too (fmv-lookup calls are never cached).
-const VERSION = 'scgv-v2.4.0';
+const VERSION = 'scgv-v2.4.1';
 const ASSETS = [
   './', './index.html', './manifest.webmanifest', './css/app.css',
   './js/app.js', './js/store.js', './js/files.js', './js/carnet.js', './js/cloud.js', './js/cloudmap.js', './js/cache.js', './js/auth.js', './js/config.js',
