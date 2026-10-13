@@ -35,7 +35,7 @@ export function rowsFromState(S, uid) {
       id: i.id, owner_id: uid, name: i.name, category: i.category, make: i.make, model: i.model, serial: i.serial, electromaxx_no: i.emx || null, qty: i.qty, status: i.status,
       purchase_date: nz(i.purchaseDate), price: num(i.price), currency: i.currency, current_value: num(i.currentValue), value_as_of: nz(i.valueAsOf), vendor: i.vendor, origin: i.origin,
       weight: num(i.weight), weight_unit: i.weightUnit, notes: i.notes, tags: i.tags.slice(),
-      parent_id: parent, part_type: parent ? (i.partType === 'installed' ? 'installed' : 'accessory') : null,
+      parent_id: parent, part_type: parent ? (['installed', 'included'].includes(i.partType) ? i.partType : 'accessory') : null,
       fmv_value: i.fmv ? i.fmv.value : null, fmv_low: i.fmv ? i.fmv.low : null, fmv_high: i.fmv ? i.fmv.high : null, fmv_count: i.fmv ? i.fmv.count : null,
       fmv_checked_at: i.fmv ? i.fmv.checkedAt : null, fmv_sources: i.fmv ? { pick: i.fmv.pick, links: i.fmv.sources, ...i.fmv.bySource } : null, fmv_query: i.fmv ? i.fmv.query || null : null,
     });

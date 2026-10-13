@@ -14,6 +14,7 @@ export function ago(days) {
 /** { state: 'none' | 'fresh' | 'stale', date, days, label, source }.
  *  Only the item's Value as of counts (within FRESH_DAYS = green); missing = stale. */
 export function valueAge(i, now = new Date()) {
+  if (i && i.parentId && i.partType === 'included') return { state: 'none', date: '', days: null, label: 'cost in main item', source: '' }; // v2.5
   // v2.4.1: only Value as of counts — no purchase-date fallback; any item without it is stale.
   const date = DATE_RE.test(i.valueAsOf || '') ? i.valueAsOf : '', source = 'value';
   if (!date) return { state: 'stale', date: '', days: null, label: 'no fair value date', source: '' };

@@ -1,10 +1,13 @@
 // ShowCrew GearVault v2.2 — parent/child parts & accessories (pure helpers, no DOM). Tested by tools/test-carnet.mjs.
 // item.parentId: id of the item it belongs to ('' = standalone). item.partType: 'installed' (inside the parent) | 'accessory'.
-export const PART_TYPES = [['installed', 'Installed inside'], ['accessory', 'Separate accessory']];
-export const partTypeOf = i => (i && i.parentId ? (i.partType === 'installed' ? 'installed' : 'accessory') : '');
+// v2.5: 'included' = comes with the parent (e.g. its power supply): own Electromaxx # / serial / photos, cost is in the parent, never on the carnet.
+export const PART_TYPES = [['installed', 'Installed inside'], ['accessory', 'Separate accessory'], ['included', 'Included accessory']];
+export const partTypeOf = i => (i && i.parentId ? (i.partType === 'installed' || i.partType === 'included' ? i.partType : 'accessory') : '');
+export const isIncluded = i => partTypeOf(i) === 'included';
 export const normPartType = v => {
   const s = String(v ?? '').trim().toLowerCase();
   if (!s) return '';
+  if (/^(included|incl\.?|in[- ]?box|in the box|comes with|bundled|supplied)\b|included/.test(s)) return 'included';
   if (/^(installed|inside|internal|built[- ]?in|in)\b|installed/.test(s)) return 'installed';
   if (/^(accessory|accessories|separate|external|loose|acc)\b|accessor/.test(s)) return 'accessory';
   return '';

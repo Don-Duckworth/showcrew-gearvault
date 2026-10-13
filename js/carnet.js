@@ -1,13 +1,13 @@
 // ShowCrew GearVault — pure carnet / CSV logic (no DOM). Tested by tools/test-carnet.mjs.
 import { looseEmx } from './emx.js';
-import { childIndex, partTypeOf, normPartType } from './parts.js';
+import { childIndex, partTypeOf, normPartType, isIncluded } from './parts.js';
 export const LB_PER_KG = 2.2046226218;
 export const toKg = (w, unit) => (w == null ? null : unit === 'lb' ? w / LB_PER_KG : w);
 export const fromKg = (kg, unit) => (kg == null ? null : unit === 'lb' ? kg * LB_PER_KG : kg);
 export const round2 = n => Math.round(n * 100) / 100;
 
 /** Value used on the carnet: optional current fair-market value, else purchase price. Per unit. */
-export const unitValue = i => (i.currentValue != null ? i.currentValue : i.price);
+export const unitValue = i => (isIncluded(i) ? null : i.currentValue != null ? i.currentValue : i.price); // v2.5: included accessories carry no value of their own
 
 export function tradeDescription(i, withSerial = false) {
   const base = [i.make, i.model].map(x => (x || '').trim()).filter(Boolean).join(' ');
@@ -31,6 +31,8 @@ export function tripItems(S, trip) {
   for (const id of trip.itemIds || []) add(id, '');
   return out;
 }
+/** Included accessory, or anything nested under one. */
+export function offCarnet(S, i) { const by = new Map(S.items.map(x => [x.id, x])); for (let c = i, n = 0; c && n < 64; c = c.parentId ? by.get(c.parentId) : null, n++) if (isIncluded(c)) return true; return false; }
 /** Kit contents including every part of every item in it (deduped). */
 export function kitItems(S, kit) {
   const t = { kitIds: [kit.id], itemIds: [], excluded: [] };
@@ -40,6 +42,7 @@ export function kitItems(S, kit) {
 /** Problems that matter for a carnet. level 'err' blocks a clean export; 'warn' is advisory. */
 export function itemIssues(i, currency = 'USD', { installed = false } = {}) {
   const out = [];
+  if (isIncluded(i)) return out; // not on the carnet
   if (!String(i.serial || '').trim()) out.push({ k: 'serial', level: 'err', msg: 'No serial number' });
   const v = unitValue(i);
   if (v == null || !(v > 0)) out.push({ k: 'value', level: 'err', msg: 'No value' });
@@ -58,7 +61,8 @@ export function itemIssues(i, currency = 'USD', { installed = false } = {}) {
  *  installed parts are folded into the parent line instead (value added, part serials appended to the description). */
 export function buildGeneralList(S, trip) {
   const cur = trip.currency || 'USD', wu = trip.weightUnit || 'kg', fold = !!trip.foldParts;
-  const entries = tripItems(S, trip), inTrip = new Map(entries.map(e => [e.item.id, e]));
+  // v2.5: included accessories (and anything under them) travel with their parent but are not carnet lines
+  const entries = tripItems(S, trip).filter(e => !offCarnet(S, e.item)), inTrip = new Map(entries.map(e => [e.item.id, e]));
   // effective tree among the items on this trip
   const kidsInTrip = new Map(), roots = [];
   for (const e of entries) {

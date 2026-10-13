@@ -1,4 +1,4 @@
-# ShowCrew GearVault — ShowCrew Tools (v2.4 · Supabase cloud)
+# ShowCrew GearVault — ShowCrew Tools (v2.5 · Supabase cloud)
 
 Track computer / show gear (Millumin, PowerPoint & Keynote rigs, rack PCs, audio, network, cables, cases) with photos and receipts,
 group it into kits / road cases, and build the **ATA Carnet General List** for travel abroad.
@@ -12,7 +12,7 @@ Live: https://don-duckworth.github.io/showcrew-gearvault/ (GitHub Pages, `main` 
 ## Status of Don's project
 
 Project **ShowCrew GearVault** (ref `ggtkglxvuxvmuqtpvlgs`, us-east-2). Steps 1, 2 and 7 below are **done**: the schema is applied
-(migrations `init_gearvault` + `init_gearvault_advisor_fixes`, for v2.1 `electromaxx_no` + `electromaxx_trip_toggle` = `0002_electromaxx.sql`, for v2.2 `parts_parent_child` = `0003_parts.sql`, for v2.3 `fmv_columns` + `fmv_sources_both` = `0004_fmv.sql`, and for v2.4 `value_as_of` = `0005_value_date.sql`; the Edge Function `fmv-lookup` is deployed) and `js/config.js` holds the project URL and the `sb_publishable_…` key.
+(migrations `init_gearvault` + `init_gearvault_advisor_fixes`, for v2.1 `electromaxx_no` + `electromaxx_trip_toggle` = `0002_electromaxx.sql`, for v2.2 `parts_parent_child` = `0003_parts.sql`, for v2.3 `fmv_columns` + `fmv_sources_both` = `0004_fmv.sql`, for v2.4 `value_as_of` = `0005_value_date.sql`, and for v2.5 `part_included` = `0006_part_included.sql`; the Edge Function `fmv-lookup` is deployed) and `js/config.js` holds the project URL and the `sb_publishable_…` key.
 Still to do in the dashboard (steps 3–6):
 
 - URL configuration (Site URL + Redirect URLs): https://supabase.com/dashboard/project/ggtkglxvuxvmuqtpvlgs/auth/url-configuration
@@ -156,6 +156,15 @@ Notes:
 - **Security**: `supabase/functions/fmv-lookup` is deployed with `verify_jwt = true` and additionally refuses sessions that aren't MFA-verified
   (`aal2`). It touches no database rows; the app saves what you apply. The button is disabled offline and the service worker never caches `/functions/v1/`.
 - Redeploy after editing: copy `js/fmv.js` into `supabase/functions/fmv-lookup/` (the unit test checks they match), then `supabase functions deploy fmv-lookup`.
+
+## Included accessories (v2.5)
+
+*Add part* now offers a third type, **Included accessory — e.g. power supply; cost in main item, not on carnet** (`part_type = 'included'`,
+migration `0006_part_included.sql`). Such a part has its own Electromaxx #, serial, notes and photos but **no value of its own** (the value field is
+hidden; it is left out of totals and the parent's *incl. parts* value, gets no green/red value date, and is never in the stale filter or *Update values*).
+It is **not on the carnet** (no line, piece, sub-line, missing-data or stale warning, also not folded in) — yet it follows its parent into kits and trips,
+and the trip item picker shows it as *included with …* for packing. It is listed nested under its parent with a purple **INCLUDED** tag; scanning its
+Electromaxx # opens it with its parent shown; the type can be switched in the part's editor. CSV *Part type* accepts `included` (also “in box”, “bundled”).
 
 ## Value as of (v2.4)
 

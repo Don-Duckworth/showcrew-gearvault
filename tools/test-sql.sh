@@ -18,6 +18,10 @@ $PSQL -d "$DB" -f supabase/migrations/0003_parts.sql
 $PSQL -d "$DB" -f supabase/migrations/0003_parts.sql
 $PSQL -d "$DB" -f supabase/migrations/0004_fmv.sql
 $PSQL -d "$DB" -f supabase/migrations/0004_fmv.sql
+$PSQL -d "$DB" -f supabase/migrations/0005_value_date.sql
+$PSQL -d "$DB" -f supabase/migrations/0005_value_date.sql
+$PSQL -d "$DB" -f supabase/migrations/0006_part_included.sql
+$PSQL -d "$DB" -f supabase/migrations/0006_part_included.sql
 $PSQL -d "$DB" -f supabase/tests/rls-test.sql
 $PSQL -d "$DB" -c "delete from auth.users"   # fresh users for the next file
 $PSQL -d "$DB" -f supabase/tests/electromaxx-test.sql

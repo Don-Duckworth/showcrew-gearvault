@@ -180,6 +180,45 @@ if (/incomplete/.test(await page.locator('.overlay').innerText())) { await page.
 const ovt = await page.locator('.overlay').last().innerText(); ok(/out of date/i.test(ovt), 'CSV export warns about out-of-date values first: ' + ovt.slice(0, 120));
 await page.locator('.overlay').last().locator('[data-r="0"]').click();
 await page.click('#nav [data-view=gear]');
+// ===== v2.5 included accessory =====
+await page.click(`.gear[data-id="${ID.studio}"]`); await page.waitForSelector('[data-act=addPart]');
+await page.click('.overlay [data-act=addPart]'); await page.waitForSelector('.overlay [data-r=included]');
+ok(/Included accessory — e\.g\. power supply; cost in main item, not on carnet/.test(await page.locator('.overlay [data-r=included]').textContent()), 'Add part chooser offers Included accessory: ' + await page.locator('.overlay [data-r=included]').textContent());
+await hideToast(page); await page.locator('.overlay').last().locator('.modal-card').screenshot({ path: OUT + 'desktop-add-part-included.png' });
+await page.click('.overlay [data-r=included]'); await page.waitForSelector('.overlay [data-f=name]');
+await page.fill('.overlay [data-f=name]', 'SAMPLE Mac Studio PSU'); await page.fill('.overlay [data-f=emx]', '004301'); await page.fill('.overlay [data-f=serial]', 'SAMPLE-PSU-1'); await page.fill('.overlay [data-f=notes]', 'SAMPLE 370W internal cable');
+ok(await page.locator('#valFld').isHidden() && await page.locator('.inclnote').isVisible(), 'included editor: value hidden, explanation shown');
+await page.click('.overlay [data-act=saveItem]'); await settled(page);
+await page.waitForSelector('.overlay [data-act=addPart]'); await page.click('.overlay [data-act=cancelEdit]'); await page.waitForFunction(() => !document.querySelector('.overlay'));
+const psu = (await fdb(page)).items.find(i => i.name === 'SAMPLE Mac Studio PSU');
+ok(psu && psu.part_type === 'included' && psu.parent_id === ID.studio && psu.electromaxx_no === '004301', 'saved with part_type included + own Electromaxx #');
+const prow = page.locator(`.gear[data-id="${psu.id}"]`);
+ok(await prow.locator('.pt.included').count() === 1 && /INCL\./.test(await prow.innerText()) && /not on carnet/.test(await prow.innerText()) && await prow.locator('.vage').count() === 0 && +(await prow.getAttribute('data-depth')) === 1, 'list: nested under parent, purple "included" tag, no value/red-green');
+await prow.scrollIntoViewIfNeeded(); await hideToast(page); await page.screenshot({ path: OUT + 'desktop-gear-list-included-psu.png' });
+await page.selectOption('[data-filter=fStatus]', 'val:stale');
+ok(!(await page.locator('#gearList .gear .g-name').allInnerTexts()).includes('SAMPLE Mac Studio PSU'), 'not in stale filter');
+await page.selectOption('[data-filter=fStatus]', '');
+await page.fill('#q', '004301'); ok(/included with|part of/i.test(await page.locator('#gearList').innerText()) || (await page.locator('#gearList .gear').count()) === 1, 'Electromaxx # search finds the PSU'); await page.fill('#q', '');
+// child editor: switch type
+await prow.click(); await page.waitForSelector('#partOfStrip');
+ok(/SAMPLE Mac Studio/.test(await page.locator('#partOfStrip').innerText()), 'PSU editor shows its parent');
+await page.selectOption('#partOfStrip [data-f=partType]', 'accessory');
+ok(await page.locator('#valFld').isVisible(), 'switching to Separate accessory shows the value field');
+await page.selectOption('#partOfStrip [data-f=partType]', 'included'); ok(await page.locator('#valFld').isHidden(), 'and back to Included hides it');
+await page.click('.overlay [data-act=cancelEdit]'); if (await page.locator('.overlay [data-r="1"]').count()) await page.locator('.overlay [data-r="1"]').last().click();
+// FMV scope excludes it
+await page.click('[data-act=fmvOpen]'); await page.check('#fmvInstalled'); await page.check('#fmvInactive');
+const allCount = await page.evaluate(() => window.__gv.S.items.length);
+ok(new RegExp(`${allCount - 1} items`).test(await page.locator('#fmvCount').innerText()), 'FMV scope never includes included accessories');
+await page.click('.overlay [data-close]');
+// trip: not on the carnet, but in the picker as "included with"
+await page.click('#nav [data-view=trips]'); await page.click('[data-act=openTrip]'); await page.waitForSelector('#tripLines');
+ok(!/Mac Studio PSU/.test(await page.locator('#tripLines table').innerText()) && !/Mac Studio PSU/.test(await page.locator('#staleBanner').innerText()), 'PSU not a carnet line and not in stale warning');
+await page.click('[data-act=pickTripItems]'); await page.waitForSelector('.overlay .pick');
+ok(/included with SAMPLE Mac Studio/.test(await page.locator('.overlay .pick', { hasText: 'Mac Studio PSU' }).innerText()), 'trip item picker shows "included with SAMPLE Mac Studio"');
+await page.click('.overlay [data-act=cancelPick], .overlay [data-close], .overlay .iconbtn').catch(() => {});
+if (await page.locator('.overlay').count()) await page.keyboard.press('Escape');
+await page.click('#nav [data-view=gear]');
 // offline
 await ctx.setOffline(true); await page.waitForTimeout(300);
 ok(await page.locator('[data-act=fmvOpen]').isDisabled(), 'Update values disabled offline');
@@ -188,7 +227,7 @@ ok(await page.locator('[data-act=fmvOpen]').isEnabled(), 're-enabled online');
 // sw never caches function calls
 const sw = await (await fetch(URL + 'sw.js')).text();
 ok(/functions\)\\\/v1/.test(sw) || /functions/.test(sw.match(/const NEVER = .*/)[0]), 'sw bypasses /functions/v1/');
-ok(/scgv-v2\.4\.1/.test(sw) && sw.includes("'./js/fmv.js'") && sw.includes("'./js/valdate.js'"), 'sw VERSION scgv-v2.4.1 precaches fmv.js + valdate.js');
+ok(/scgv-v2\.5\.0/.test(sw) && sw.includes("'./js/fmv.js'") && sw.includes("'./js/valdate.js'"), 'sw VERSION scgv-v2.5.0 precaches fmv.js + valdate.js');
 ok(!errs.length, 'no console errors ' + errs.join(' | '));
 await ctx.close();
 

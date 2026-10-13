@@ -1,4 +1,4 @@
--- Parts (parent/child) checks. Run after local-stub.sql + 0001 + 0002 + 0003 (tools/test-sql.sh).
+-- Parts (parent/child) checks. Run after local-stub.sql + 0001 … 0006 (tools/test-sql.sh).
 \set ON_ERROR_STOP 1
 insert into auth.users (id, email) values
   ('11111111-1111-1111-1111-111111111111', 'don@example.com'),
@@ -24,7 +24,10 @@ insert into public.items (id, name, parent_id, part_type) values
   ('aaaaaaaa-0000-0000-0000-00000000000c', 'SAMPLE GPU bracket', 'aaaaaaaa-0000-0000-0000-00000000000b', 'installed'),
   ('aaaaaaaa-0000-0000-0000-00000000000d', 'SAMPLE Power cable', 'aaaaaaaa-0000-0000-0000-00000000000a', 'accessory');
 insert into results select count(*) = 3, 'parts linked to own items (installed + accessory, 2 levels)' from public.items where parent_id is not null;
-insert into results select pg_temp.fails($$insert into public.items (name, parent_id, part_type) values ('x', 'aaaaaaaa-0000-0000-0000-00000000000a', 'inside')$$, '23514'), 'part_type must be installed/accessory';
+insert into results select pg_temp.fails($$insert into public.items (name, parent_id, part_type) values ('x', 'aaaaaaaa-0000-0000-0000-00000000000a', 'inside')$$, '23514'), 'part_type must be installed/accessory/included';
+-- v2.5 (0006): 'included' is allowed
+insert into results select not pg_temp.fails($$insert into public.items (id, name, parent_id, part_type) values ('aaaaaaaa-0000-0000-0000-0000000000ee', 'SAMPLE PSU', 'aaaaaaaa-0000-0000-0000-00000000000a', 'included')$$, 'xxxxx'), 'part_type included accepted (0006)';
+delete from public.items where id = 'aaaaaaaa-0000-0000-0000-0000000000ee';
 insert into results select pg_temp.fails($$update public.items set parent_id = id where id = 'aaaaaaaa-0000-0000-0000-00000000000a'$$, '23514'), 'item cannot be its own parent';
 insert into results select pg_temp.fails($$update public.items set parent_id = 'aaaaaaaa-0000-0000-0000-00000000000b' where id = 'aaaaaaaa-0000-0000-0000-00000000000a'$$, '23514'), '2-item cycle rejected (A→B→A)';
 insert into results select pg_temp.fails($$update public.items set parent_id = 'aaaaaaaa-0000-0000-0000-00000000000c' where id = 'aaaaaaaa-0000-0000-0000-00000000000a'$$, '23514'), '3-level cycle rejected (A→C→B→A)';

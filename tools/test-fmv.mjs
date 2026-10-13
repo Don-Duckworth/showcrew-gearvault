@@ -74,4 +74,25 @@ ok(fs.readFileSync(new URL('../js/fmv.js', import.meta.url), 'utf8') === fs.read
   ok(M.stateFromRows({ items: [{ ...r, value_as_of: '2026-01-02' }] }).items[0].valueAsOf === '2026-01-02', 'value_as_of round-trip');
   ok(Store.sanitizeItem({ valueAsOf: '12/1/2026' }).valueAsOf === '', 'non-ISO date dropped');
   ok(C.INV_COLS.some(([h, k]) => h === 'Value as of' && k === 'valueAsOf'), 'inventory CSV has Value as of column'); }
+{ // v2.5 included accessories
+  const P = await import('../js/parts.js');
+  const S = Store.emptyState(), mk = o => Object.assign(Store.makeItem(S.settings), o);
+  const nas = mk({ id: 'n', name: 'SAMPLE NAS', serial: 'N1', origin: 'Taiwan', price: 1000, currentValue: 900, valueAsOf: VD.todayISO(), weight: 3 });
+  const psu = mk({ id: 'p', name: 'SAMPLE NAS PSU', serial: 'PSU1', emx: '004300', parentId: 'n', partType: 'included', price: 80 });
+  const ram = mk({ id: 'r', name: 'SAMPLE RAM', serial: 'R1', origin: 'Korea', price: 200, parentId: 'n', partType: 'installed', valueAsOf: VD.todayISO() });
+  S.items.push(nas, psu, ram);
+  ok(P.normPartType('Included') === 'included' && P.normPartType('in box') === 'included' && P.normPartType('installed') === 'installed' && P.normPartType('accessory') === 'accessory', 'normPartType: included / in box');
+  ok(P.partTypeOf(psu) === 'included' && P.isIncluded(psu) && Store.sanitizeItem(psu).partType === 'included', 'partTypeOf + sanitize keep included');
+  ok(C.unitValue(psu) === null && C.itemIssues(psu).length === 0, 'included: no value of its own, no carnet issues');
+  ok(P.valueWithParts(S.items, 'n', C.unitValue).value === 1100, 'incl. parts value excludes included PSU (900 + 200)');
+  ok(VD.valueAge(psu).state === 'none' && !VD.isStale(psu), 'included: no green/red, not stale');
+  const t = { ...Store.makeTrip(S.settings), itemIds: ['n'] };
+  ok(C.tripItems(S, t).some(e => e.item.id === 'p'), 'included follows the parent onto the trip (packing)');
+  const gl = C.buildGeneralList(S, t);
+  ok(!gl.lines.some(l => l.itemId === 'p') && gl.totals.lines === 1 && gl.totals.pieces === 1 && gl.totals.subLines === 1 && gl.totals.value === 1100 && gl.totals.errors === 0, 'carnet: PSU not a line / piece / value / issue');
+  const glf = C.buildGeneralList(S, { ...t, foldParts: true }); ok(!glf.lines[0].folded.includes('p') && !/PSU/.test(glf.lines[0].description), 'fold mode ignores included');
+  const r = [...M.rowsFromState(S, 'u').items.values()].find(x => x.id === 'p'); ok(r.part_type === 'included', 'row part_type included');
+  ok(M.stateFromRows({ items: [...M.rowsFromState(S, 'u').items.values()] }).items.find(i => i.id === 'p').partType === 'included', 'round-trip included');
+  const csv = C.inventoryCSV(S.items); ok(/included/.test(csv) && C.parseInventoryCSV(csv).find(o => o.name === 'SAMPLE NAS PSU').partType === 'included', 'inventory CSV writes + reads Part type included');
+}
 console.log(fails ? `${fails} FAILED` : 'ALL FMV TESTS PASS'); process.exit(fails ? 1 : 0);

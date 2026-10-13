@@ -13,7 +13,7 @@ import * as P from './parts.js';
 import * as Fmv from './fmv.js';
 import * as VD from './valdate.js';
 
-const APP_VERSION = '2.4.1';
+const APP_VERSION = '2.5.0';
 const $ = (sel, el = document) => el.querySelector(sel);
 const $$ = (sel, el = document) => [...el.querySelectorAll(sel)];
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -74,7 +74,7 @@ const itemById = id => S.items.find(i => i.id === id);
 const parentOf = i => (i && i.parentId ? itemById(i.parentId) : null);
 const valCls = i => ({ fresh: 'val-fresh', stale: 'val-stale' }[VD.valueAge(i).state] || '');
 const lineVal = i => (C.unitValue(i) || 0) * (i.qty || 1);
-const PT_LABEL = { installed: 'installed', accessory: 'accessory' };
+const PT_LABEL = { installed: 'installed', accessory: 'accessory', included: 'included' };
 
 // ---------- overlay layers (stackable modals) ----------
 const layers = [];
@@ -244,7 +244,7 @@ function gearRowHTML(i, { depth = 0, kids = null, flat = false } = {}) {
       ${partsTag || partOf || ptTag ? `<div class="g-parts">${ptTag}${partOf}${partsTag}</div>` : ''}
       ${flags ? `<div class="g-flags">${flags}</div>` : ''}</div>
     <div class="g-meta"><div>${esc(i.category)}</div><div class="row">${kits.map(k => `<span class="tag kit">▣ ${esc(k.name)}</span>`).join('')}${i.tags.map(t => `<span class="tag">#${esc(t)}</span>`).join('')}</div>${i.origin ? `<div>Origin: ${esc(i.origin)}</div>` : ''}</div>
-    <div class="g-val ${valCls(i)}" title="${esc(VD.valueAge(i).label)}">${v == null ? '<span style="color:var(--amber)">—</span>' : money(v * (i.qty || 1), i.currency)}<small>${i.qty > 1 ? `${i.qty} × ${money(v, i.currency)}` : i.currentValue != null ? 'current value' : v != null ? 'purchase' : 'no value'}</small>${vw ? `<small class="inclparts" title="Item + all its parts${vw.other ? ` (${vw.other} in another currency not included)` : ''}">${money(vw.value, vw.currency)} incl. parts</small>` : ''}<small class="vage">${VD.valueAge(i).state === 'fresh' ? '✓' : '⚠'} ${esc(VD.valueAge(i).label)}</small></div>
+    ${P.isIncluded(i) ? `<div class="g-val incl"><span class="inclv">INCL.</span><small>cost in ${esc(itemTitle(par) || 'main item')}</small><small>not on carnet</small></div>` : `<div class="g-val ${valCls(i)}" title="${esc(VD.valueAge(i).label)}">${v == null ? '<span style="color:var(--amber)">—</span>' : money(v * (i.qty || 1), i.currency)}<small>${i.qty > 1 ? `${i.qty} × ${money(v, i.currency)}` : i.currentValue != null ? 'current value' : v != null ? 'purchase' : 'no value'}</small>${vw ? `<small class="inclparts" title="Item + all its parts${vw.other ? ` (${vw.other} in another currency not included)` : ''}">${money(vw.value, vw.currency)} incl. parts</small>` : ''}<small class="vage">${VD.valueAge(i).state === 'fresh' ? '✓' : '⚠'} ${esc(VD.valueAge(i).label)}</small></div>`}
   </button>`;
 }
 function renderGearList() {
@@ -400,8 +400,8 @@ function fmvOpen(preset = null) {
   const srcs = () => $$('[data-fmvsrc]:checked', o).map(x => x.dataset.fmvsrc);
   const pick = () => {
     const sc = $('input[name=fmvScope]:checked', o).value, inst = $('#fmvInstalled', o).checked, inact = $('#fmvInactive', o).checked;
-    if (sc === 'preset') return preset.items;
-    return (sc === 'filtered' ? filt : sc === 'novalue' ? noVal : all).filter(i => (inst || P.partTypeOf(i) !== 'installed') && (inact || inService(i)));
+    if (sc === 'preset') return preset.items.filter(i => !P.isIncluded(i));
+    return (sc === 'filtered' ? filt : sc === 'novalue' ? noVal : all).filter(i => !P.isIncluded(i) && (inst || P.partTypeOf(i) !== 'installed') && (inact || inService(i)));
   };
   const upd = () => { const n = pick().length, k = Fmv.searchesPerItem(srcs()), m = n * k; $('#fmvCount', o).innerHTML = `<b>${plural(n, 'item')}</b> × ${k} = <b>${m} search${m === 1 ? '' : 'es'}</b>`; $('#fmvGo', o).disabled = !n || !k; };
   o.addEventListener('change', upd); upd();
@@ -524,7 +524,9 @@ function renderPartOf() {
     <button class="lnk" data-act="openParent" data-id="${par.id}">${esc(itemTitle(par))}</button>${par.emx ? `<span class="emxtag">${EMX_GLYPH}${esc(par.emx)}</span>` : ''}
     ${chain.length ? `<span class="hint">in ${esc(chain.join(' › '))}</span>` : ''}<span class="grow"></span>
     <select class="inp" data-f="partType" aria-label="Part type" style="width:auto">${P.PART_TYPES.map(([k, l]) => `<option value="${k}" ${P.partTypeOf(d) === k ? 'selected' : ''}>${l}</option>`).join('')}</select>
-    <button class="btn sm ghost" data-act="unlinkSelf">Unlink</button></div>`;
+    <button class="btn sm ghost" data-act="unlinkSelf">Unlink</button></div>
+    ${P.isIncluded(d) ? '<p class="note inclnote">⊂ <b>Included accessory</b> — its cost is part of the main item, so it needs no value of its own and is <b>not listed on the carnet</b>. It still follows the main item into kits and trips (packing list).</p>' : ''}`;
+  box.closest('.modal-card')?.classList.toggle('is-incl', P.isIncluded(d));
 }
 function renderParts() {
   const box = $('#partsBox'); if (!box || !ui.edit) return;
@@ -637,7 +639,7 @@ function pickerHTML(selected, listName) {
   if (!items.length) return '<p class="hint">No gear yet — add items in the Gear tab first.</p>';
   return `<div class="search"><input class="inp" type="search" data-pickfilter placeholder="Filter ${items.length} items…" autocomplete="off"></div>
   <div class="picker" data-list="${listName}">${items.map(i => `<label class="pick ${selected.has(i.id) ? 'on' : ''}" data-s="${esc([itemTitle(i), i.make, i.model, i.serial, i.category, ...i.tags].join(' ').toLowerCase())}">
-    <input type="checkbox" value="${i.id}" ${selected.has(i.id) ? 'checked' : ''}><span class="pn">${esc(itemTitle(i))}<small>${esc(i.serial || '')}${(n => (n ? ` · +${plural(n, 'part')} included` : ''))(P.descendants(S.items, i.id).length)}${parentOf(i) ? ` · part of ${esc(itemTitle(parentOf(i)))}` : ''}</small></span><span class="pv">${esc(i.category)}${inService(i) ? '' : ' · ' + i.status}</span></label>`).join('')}</div>`;
+    <input type="checkbox" value="${i.id}" ${selected.has(i.id) ? 'checked' : ''}><span class="pn">${esc(itemTitle(i))}<small>${esc(i.serial || '')}${(n => (n ? ` · +${plural(n, 'part')} included` : ''))(P.descendants(S.items, i.id).length)}${parentOf(i) ? ` · ${P.isIncluded(i) ? 'included with' : 'part of'} ${esc(itemTitle(parentOf(i)))}` : ''}</small></span><span class="pv">${esc(i.category)}${inService(i) ? '' : ' · ' + i.status}</span></label>`).join('')}</div>`;
 }
 function openKitEditor(kit, isNew) {
   const o = openLayer(`<div class="sheet-h"><div class="title">${isNew ? '＋ NEW KIT' : 'EDIT KIT'}</div><button class="iconbtn" data-act="closeTop" aria-label="Close">✕</button></div>
@@ -962,7 +964,7 @@ const ACTIONS = {
   addPart: async () => {
     const E = ui.edit; if (!E) return;
     const type = await choose('Add a part', `<p class="hint">A new item is created as part of “${esc(itemTitle(E.d))}”, prefilled with its category, vendor, purchase date and country of origin.</p>`,
-      [['installed', '⧉ Installed inside <small>— carnet sub-line, not an extra piece</small>', 'primary'], ['accessory', '＋ Separate accessory <small>— its own carnet line</small>']]);
+      [['installed', '⧉ Installed inside <small>— carnet sub-line, not an extra piece</small>', 'primary'], ['accessory', '＋ Separate accessory <small>— its own carnet line</small>'], ['included', '⊂ Included accessory <small>— e.g. power supply; cost in main item, not on carnet</small>']]);
     if (!type || !ui.edit) return;
     const pid = E.d.id; if (!commitEdit()) return;
     const par = itemById(pid); if (!par) return;
@@ -979,7 +981,7 @@ const ACTIONS = {
     const o = el.closest('.overlay'), pid = o._pid, c = itemById(el.dataset.id), type = $('#linkType', o)?.value || 'accessory';
     if (!c || P.wouldCycle(S.items, c.id, pid)) return toast('That would make an item a part of its own part');
     Object.assign(c, { parentId: pid, partType: type, updated: Date.now() }); persist(); closeLayer(o, true); render(); renderParts();
-    toast(`Linked “${itemTitle(c)}” as ${type === 'installed' ? 'installed part' : 'accessory'}`);
+    toast(`Linked “${itemTitle(c)}” as ${type === 'installed' ? 'installed part' : type === 'included' ? 'included accessory' : 'accessory'}`);
   },
   unlinkPart: async el => {
     const c = itemById(el.dataset.id); if (!c) return;
@@ -1081,7 +1083,7 @@ document.addEventListener('input', e => {
 document.addEventListener('change', async e => {
   const el = e.target;
   if (el.dataset.filter) { ui[el.dataset.filter] = el.value; return renderGearList(); }
-  if (el.dataset.f && ui.edit) { ui.edit.d[el.dataset.f] = el.value; if (['valueAsOf', 'purchaseDate', 'price'].includes(el.dataset.f)) renderValAge(); return; }
+  if (el.dataset.f && ui.edit) { ui.edit.d[el.dataset.f] = el.value; if (el.dataset.f === 'partType') { renderPartOf(); renderValAge(); } if (['valueAsOf', 'purchaseDate', 'price'].includes(el.dataset.f)) renderValAge(); return; }
   if (el.closest('.pick')) { el.closest('.pick').classList.toggle('on', el.checked); return; }
   if (el.dataset.attkind && ui.edit) {
     const files = [...el.files]; el.value = ''; if (!files.length) return;
